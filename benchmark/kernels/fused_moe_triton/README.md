@@ -260,12 +260,12 @@ deterministic output-text hash check. The delta is attributable to MoE only when
 MoE is the sole server difference; the tool does not infer operator ownership
 from kernel names.
 
-### GLM-5.2 Triton Gluon TP8 kernel snapshot
+### GLM-5.2 Triton Gluon TP4 and TP8 kernel snapshots
 
-`glm52_triton_gluon_tp8/` contains the consolidated gfx950 MXFP4 fused-MoE
-implementation corresponding to the candidate arm of the GLM-5.2 TP8/EP1
-measurement. Its 40 target and
-MTP/draft dispatch specializations are consolidated into eight source files.
+`glm52_triton_gluon_tp4/` and `glm52_triton_gluon_tp8/` contain the consolidated
+gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 42 target and
+MTP/draft dispatch entries backed by five source files. The TP8 profile has 40
+entries backed by eight source files.
 Related active-batch shapes share a kernel implementation, while tile sizes,
 warp counts, splits, grouping, and other shape-specific choices remain static
 or `gl.constexpr` values so Triton specializes them at compile time. Each
