@@ -1,0 +1,772 @@
+{
+  "schema_version": 2,
+  "variant": "glm52.fused_moe",
+  "specializations": [
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m2",
+      "signature": [
+        2,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1_2.py",
+      "source_sha256": "18408a8edc383b568be42df31825183bdef7caca9826b74284f160636cdd30fd",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m8",
+      "signature": [
+        8,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4_16.py",
+      "source_sha256": "4e545821153ad88bae440daf5bdc8633954b3361c2ccca6dc7fc6fda58645816",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1",
+      "signature": [
+        1,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1_2.py",
+      "source_sha256": "18408a8edc383b568be42df31825183bdef7caca9826b74284f160636cdd30fd",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4",
+      "signature": [
+        4,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4_16.py",
+      "source_sha256": "4e545821153ad88bae440daf5bdc8633954b3361c2ccca6dc7fc6fda58645816",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m16",
+      "signature": [
+        16,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4_16.py",
+      "source_sha256": "4e545821153ad88bae440daf5bdc8633954b3361c2ccca6dc7fc6fda58645816",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m64",
+      "signature": [
+        64,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m32_128.py",
+      "source_sha256": "cd670bbafb7a8b688f2a7fe83dce55e1f7a037fe18d4acb9f15f0b54a4993129",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m32",
+      "signature": [
+        32,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m32_128.py",
+      "source_sha256": "cd670bbafb7a8b688f2a7fe83dce55e1f7a037fe18d4acb9f15f0b54a4993129",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m128",
+      "signature": [
+        128,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m32_128.py",
+      "source_sha256": "cd670bbafb7a8b688f2a7fe83dce55e1f7a037fe18d4acb9f15f0b54a4993129",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m256",
+      "signature": [
+        256,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m256.py",
+      "source_sha256": "972d6aeaf8c03d9de4ed02250c8163af3cde8d089e9e151e9b264c6dd3edb613",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m16385_16768",
+      "signature": [
+        16385,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {}
+      },
+      "signature_ranges": {
+        "0": [
+          16385,
+          16768
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1024_1024",
+      "signature": [
+        1024,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          1024,
+          1024
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1025_2047",
+      "signature": [
+        1025,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          1025,
+          2047
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1024_1024",
+      "signature": [
+        2048,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          2048,
+          2048
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1025_2047",
+      "signature": [
+        2049,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          2049,
+          3071
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1024_1024",
+      "signature": [
+        3072,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          3072,
+          3072
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1025_2047",
+      "signature": [
+        3073,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          3073,
+          4095
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1024_1024",
+      "signature": [
+        4096,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          4096,
+          4096
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1025_2047",
+      "signature": [
+        4097,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          4097,
+          4191
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1024_1024",
+      "signature": [
+        4192,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
+      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          4192,
+          4192
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4193_4193",
+      "signature": [
+        4193,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          4193,
+          4193
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4194_6143",
+      "signature": [
+        4194,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          4194,
+          6143
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4193_4193",
+      "signature": [
+        6144,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          6144,
+          6144
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4194_6143",
+      "signature": [
+        6145,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          6145,
+          8191
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4193_4193",
+      "signature": [
+        8192,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          8192,
+          8192
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4194_6143",
+      "signature": [
+        8193,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          8193,
+          12287
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4193_4193",
+      "signature": [
+        12288,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          12288,
+          12288
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4194_6143",
+      "signature": [
+        12289,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          12289,
+          16383
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4193_4193",
+      "signature": [
+        16384,
+        0,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          16384,
+          16384
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1_mtp",
+      "signature": [
+        1,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1_mtp.py",
+      "source_sha256": "960b0329996957e9eec15dcb24c745454ad75d153d04b5845cc7fecb4243d561",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m2_mtp",
+      "signature": [
+        2,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m2_mtp.py",
+      "source_sha256": "8a67984fdbf295fc52a7c7e63447f3ac2e77ec9439eaa5c2ecdecd698bddcaca",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4_mtp",
+      "signature": [
+        4,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4_mtp.py",
+      "source_sha256": "d6ca6aa7c70031225ef6f3cf2cd73af1c29a7968e3f274868fddf263f7466f0b",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m8_mtp",
+      "signature": [
+        8,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m8_mtp.py",
+      "source_sha256": "f4a72bc86ec07649c0049a14ac8d1893b064083d170a829eb4d0449cb92e2269",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m16_mtp",
+      "signature": [
+        16,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m16_mtp.py",
+      "source_sha256": "675d8cdb89139860c2c1709511020efa200277386beab28e7bb695f5e4c00a5d",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m32_mtp",
+      "signature": [
+        32,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m32_mtp.py",
+      "source_sha256": "f2d19c7a8d6daee249df710969cf955aafb28ffe00f679831604a1a202d13487",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m64_mtp",
+      "signature": [
+        64,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m64_mtp.py",
+      "source_sha256": "45e46101f0f59ca2964bc364d2395b9108f6d70361ffe4a1fd0034273ca694bf",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m128_mtp",
+      "signature": [
+        128,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m128_mtp.py",
+      "source_sha256": "3314e237bf4feb6497d5f07a46350845560067b43078724c406c32085d0cb303",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m256_mtp",
+      "signature": [
+        256,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m256_mtp.py",
+      "source_sha256": "17d4ff15cc2777910ee649252bfb2bfaa0a9b808a2d03104960c545f33ee9a09",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m1024_4192_mtp",
+      "signature": [
+        1024,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m1024_4192_mtp.py",
+      "source_sha256": "036f861b1ea50ae5d116a4a27304dd07dab10699575de43ffaf6cbf2891f0b8f",
+      "semantics": {
+        "contract": {}
+      },
+      "signature_ranges": {
+        "0": [
+          1024,
+          4192
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m4193_16384_mtp",
+      "signature": [
+        4193,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16384_mtp.py",
+      "source_sha256": "ee45b50a43a431f4e22ea6118ebde263915bdd0f5e4fb3f5ab88d8b39df0bfa3",
+      "semantics": {
+        "contract": {
+          "family": "moe"
+        }
+      },
+      "signature_ranges": {
+        "0": [
+          4193,
+          16384
+        ]
+      }
+    },
+    {
+      "variant": "glm52.fused_moe",
+      "candidate_id": "fused_moe_tp8_m16385_16768",
+      "signature": [
+        16385,
+        1,
+        0
+      ],
+      "source_file": "fused_moe/fused_moe_tp8_m16385_16768.py",
+      "source_sha256": "aa8dfe9b924e1fea13239c865e18c680633ef22fe5e321ce332f4a51c0b36b5a",
+      "semantics": {
+        "contract": {}
+      },
+      "signature_ranges": {
+        "0": [
+          16385,
+          16768
+        ]
+      }
+    }
+  ]
+}

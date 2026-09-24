@@ -259,3 +259,17 @@ the per-step and per-output-token deltas, the largest GPU activities, and a
 deterministic output-text hash check. The delta is attributable to MoE only when
 MoE is the sole server difference; the tool does not infer operator ownership
 from kernel names.
+
+### GLM-5.2 Artemis TP8 kernel snapshot
+
+`artemis_glm52_tp8/` contains the exact gfx950 MXFP4 fused-MoE kernel snapshot
+used by the candidate arm of the GLM-5.2 TP8/EP1 measurement. The profile has
+40 dispatch specializations backed by 18 source files, including both target
+and MTP/draft paths. Each profile row records the SHA-256 of its source file so
+the measured kernel set can be verified without importing GPU dependencies.
+
+The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
+the Artemis `fused_moe` ABI; server-side binding and weight packing remain the
+responsibility of the Artemis SGLang plugin. This directory is a reproducible
+kernel snapshot for the A/B benchmark, not a replacement for SGLang's native
+MoE dispatch.
