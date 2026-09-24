@@ -1,5 +1,5 @@
 default_stages: [pre-commit, pre-push, manual]
-exclude: ^(python/sglang/multimodal_gen/csrc|python/sglang/kernels/ops/diffusion/render|python/sglang/kernels/ops/attention/flash_attn/cute|benchmark/kernels/fused_moe_triton/artemis_glm52_tp8/fused_moe)
+exclude: ^(python/sglang/multimodal_gen/csrc|python/sglang/kernels/ops/diffusion/render|python/sglang/kernels/ops/attention/flash_attn/cute|benchmark/kernels/fused_moe_triton/glm52_triton_gluon_tp8/fused_moe)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

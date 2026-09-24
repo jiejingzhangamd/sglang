@@ -1,3 +1,5 @@
+"""GLM-5.2 TP8 MTP fused MoE specialization for M=32..256."""
+
 import torch
 import triton
 from triton.experimental import gluon

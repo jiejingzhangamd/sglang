@@ -260,16 +260,20 @@ deterministic output-text hash check. The delta is attributable to MoE only when
 MoE is the sole server difference; the tool does not infer operator ownership
 from kernel names.
 
-### GLM-5.2 Artemis TP8 kernel snapshot
+### GLM-5.2 Triton Gluon TP8 kernel snapshot
 
-`artemis_glm52_tp8/` contains the exact gfx950 MXFP4 fused-MoE kernel snapshot
-used by the candidate arm of the GLM-5.2 TP8/EP1 measurement. The profile has
-40 dispatch specializations backed by 18 source files, including both target
-and MTP/draft paths. Each profile row records the SHA-256 of its source file so
-the measured kernel set can be verified without importing GPU dependencies.
+`glm52_triton_gluon_tp8/` contains the consolidated gfx950 MXFP4 fused-MoE
+implementation corresponding to the candidate arm of the GLM-5.2 TP8/EP1
+measurement. Its 40 target and
+MTP/draft dispatch specializations are consolidated into nine source files.
+Related active-batch shapes share a kernel implementation, while tile sizes,
+warp counts, splits, grouping, and other shape-specific choices remain static
+or `gl.constexpr` values so Triton specializes them at compile time. Each
+profile row records the SHA-256 of its source file so the kernel set can be
+verified without importing GPU dependencies.
 
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
-the Artemis `fused_moe` ABI; server-side binding and weight packing remain the
-responsibility of the Artemis SGLang plugin. This directory is a reproducible
-kernel snapshot for the A/B benchmark, not a replacement for SGLang's native
-MoE dispatch.
+the `fused_moe` entry point expected by the GLM-5.2 integration; server-side
+binding and weight packing remain outside this benchmark bundle. This directory
+is a reproducible kernel snapshot for the A/B benchmark, not a replacement for
+SGLang's native MoE dispatch.

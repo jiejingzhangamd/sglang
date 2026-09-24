@@ -570,8 +570,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m1_mtp.py",
-      "source_sha256": "960b0329996957e9eec15dcb24c745454ad75d153d04b5845cc7fecb4243d561",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16_mtp.py",
+      "source_sha256": "435fc87a80cd6073b098087df50cace11b7899ae6e9cf7da29400d60ec56263c",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -586,8 +586,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m2_mtp.py",
-      "source_sha256": "8a67984fdbf295fc52a7c7e63447f3ac2e77ec9439eaa5c2ecdecd698bddcaca",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16_mtp.py",
+      "source_sha256": "435fc87a80cd6073b098087df50cace11b7899ae6e9cf7da29400d60ec56263c",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -602,8 +602,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m4_mtp.py",
-      "source_sha256": "d6ca6aa7c70031225ef6f3cf2cd73af1c29a7968e3f274868fddf263f7466f0b",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16_mtp.py",
+      "source_sha256": "435fc87a80cd6073b098087df50cace11b7899ae6e9cf7da29400d60ec56263c",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -618,8 +618,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m8_mtp.py",
-      "source_sha256": "f4a72bc86ec07649c0049a14ac8d1893b064083d170a829eb4d0449cb92e2269",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16_mtp.py",
+      "source_sha256": "435fc87a80cd6073b098087df50cace11b7899ae6e9cf7da29400d60ec56263c",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -634,8 +634,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m16_mtp.py",
-      "source_sha256": "675d8cdb89139860c2c1709511020efa200277386beab28e7bb695f5e4c00a5d",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16_mtp.py",
+      "source_sha256": "435fc87a80cd6073b098087df50cace11b7899ae6e9cf7da29400d60ec56263c",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -650,8 +650,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m32_mtp.py",
-      "source_sha256": "f2d19c7a8d6daee249df710969cf955aafb28ffe00f679831604a1a202d13487",
+      "source_file": "fused_moe/fused_moe_tp8_m32_256_mtp.py",
+      "source_sha256": "4c4c77603875cc2480521b955fa67558df0c442cfcd311d6863d43e22f4a6ddd",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -666,8 +666,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m64_mtp.py",
-      "source_sha256": "45e46101f0f59ca2964bc364d2395b9108f6d70361ffe4a1fd0034273ca694bf",
+      "source_file": "fused_moe/fused_moe_tp8_m32_256_mtp.py",
+      "source_sha256": "4c4c77603875cc2480521b955fa67558df0c442cfcd311d6863d43e22f4a6ddd",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -682,8 +682,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m128_mtp.py",
-      "source_sha256": "3314e237bf4feb6497d5f07a46350845560067b43078724c406c32085d0cb303",
+      "source_file": "fused_moe/fused_moe_tp8_m32_256_mtp.py",
+      "source_sha256": "4c4c77603875cc2480521b955fa67558df0c442cfcd311d6863d43e22f4a6ddd",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -698,8 +698,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m256_mtp.py",
-      "source_sha256": "17d4ff15cc2777910ee649252bfb2bfaa0a9b808a2d03104960c545f33ee9a09",
+      "source_file": "fused_moe/fused_moe_tp8_m32_256_mtp.py",
+      "source_sha256": "4c4c77603875cc2480521b955fa67558df0c442cfcd311d6863d43e22f4a6ddd",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -734,8 +734,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m4193_16384_mtp.py",
-      "source_sha256": "ee45b50a43a431f4e22ea6118ebde263915bdd0f5e4fb3f5ab88d8b39df0bfa3",
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -756,8 +756,8 @@
         1,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m16385_16768.py",
-      "source_sha256": "aa8dfe9b924e1fea13239c865e18c680633ef22fe5e321ce332f4a51c0b36b5a",
+      "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
+      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
       "semantics": {
         "contract": {}
       },
