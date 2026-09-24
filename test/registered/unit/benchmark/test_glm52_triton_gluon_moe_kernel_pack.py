@@ -25,7 +25,7 @@ def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
     shipped_sources = {
         path.relative_to(PACK).as_posix() for path in (PACK / "fused_moe").glob("*.py")
     }
-    assert len(referenced_sources) == 9
+    assert len(referenced_sources) == 8
     assert shipped_sources == referenced_sources
 
     for row in specializations:
@@ -41,8 +41,9 @@ def test_related_shapes_share_compile_time_specialized_sources() -> None:
         if not row.get("signature_ranges")
     }
 
-    assert {sources[(shape, 0)] for shape in (1, 2)} == {"fused_moe_tp8_m1_2.py"}
-    assert {sources[(shape, 0)] for shape in (4, 8, 16)} == {"fused_moe_tp8_m4_16.py"}
+    assert {sources[(shape, 0)] for shape in (1, 2, 4, 8, 16)} == {
+        "fused_moe_tp8_m1_16.py"
+    }
     assert {sources[(shape, 0)] for shape in (32, 64, 128)} == {
         "fused_moe_tp8_m32_128.py"
     }

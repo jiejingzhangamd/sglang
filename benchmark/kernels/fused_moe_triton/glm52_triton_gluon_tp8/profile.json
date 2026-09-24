@@ -10,8 +10,8 @@
         0,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m1_2.py",
-      "source_sha256": "18408a8edc383b568be42df31825183bdef7caca9826b74284f160636cdd30fd",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16.py",
+      "source_sha256": "a5ae215a942d2f9c92684bc881330451e53a91391e9ade193f03cc599843fc5a",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -26,8 +26,8 @@
         0,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m4_16.py",
-      "source_sha256": "4e545821153ad88bae440daf5bdc8633954b3361c2ccca6dc7fc6fda58645816",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16.py",
+      "source_sha256": "a5ae215a942d2f9c92684bc881330451e53a91391e9ade193f03cc599843fc5a",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -42,8 +42,8 @@
         0,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m1_2.py",
-      "source_sha256": "18408a8edc383b568be42df31825183bdef7caca9826b74284f160636cdd30fd",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16.py",
+      "source_sha256": "a5ae215a942d2f9c92684bc881330451e53a91391e9ade193f03cc599843fc5a",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -58,8 +58,8 @@
         0,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m4_16.py",
-      "source_sha256": "4e545821153ad88bae440daf5bdc8633954b3361c2ccca6dc7fc6fda58645816",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16.py",
+      "source_sha256": "a5ae215a942d2f9c92684bc881330451e53a91391e9ade193f03cc599843fc5a",
       "semantics": {
         "contract": {
           "family": "moe"
@@ -74,8 +74,8 @@
         0,
         0
       ],
-      "source_file": "fused_moe/fused_moe_tp8_m4_16.py",
-      "source_sha256": "4e545821153ad88bae440daf5bdc8633954b3361c2ccca6dc7fc6fda58645816",
+      "source_file": "fused_moe/fused_moe_tp8_m1_16.py",
+      "source_sha256": "a5ae215a942d2f9c92684bc881330451e53a91391e9ade193f03cc599843fc5a",
       "semantics": {
         "contract": {
           "family": "moe"

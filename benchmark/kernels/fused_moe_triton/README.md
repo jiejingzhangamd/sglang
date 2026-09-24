@@ -265,7 +265,7 @@ from kernel names.
 `glm52_triton_gluon_tp8/` contains the consolidated gfx950 MXFP4 fused-MoE
 implementation corresponding to the candidate arm of the GLM-5.2 TP8/EP1
 measurement. Its 40 target and
-MTP/draft dispatch specializations are consolidated into nine source files.
+MTP/draft dispatch specializations are consolidated into eight source files.
 Related active-batch shapes share a kernel implementation, while tile sizes,
 warp counts, splits, grouping, and other shape-specific choices remain static
 or `gl.constexpr` values so Triton specializes them at compile time. Each
