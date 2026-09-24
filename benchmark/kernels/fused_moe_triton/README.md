@@ -208,3 +208,54 @@ The benchmark results will be saved as plots and data files in the specified out
 - `benchmark_torch_compile_fused_moe.py`: A tool for benchmarking the performance of the fused MoE kernel with `torch.compile` and original fused MoE kernel.
 
 Usage is similar to `benchmark_vllm_vs_sglang_fused_moe_triton.py`, note that `torch.compile` does not support `fp8_w8a8` and `int8_w8a8` fused_moe_kernel. Both tools now support EP mode with `--ep-size` parameter.
+
+### Server Trace A/B Tool
+
+`profile_moe_server_ab.py` measures the aggregate GPU-time change of a MoE-only
+server modification. It captures the same deterministic decode window from a
+baseline and candidate server, then compares the rank-local GPU activity. Keep
+all server arguments identical except for the MoE implementation under test.
+
+Capture the baseline while its server is running:
+
+```bash
+python benchmark/kernels/fused_moe_triton/profile_moe_server_ab.py capture \
+  --url http://127.0.0.1:30000 \
+  --output-dir /shared/profiles/native \
+  --profile-id native \
+  --steps 50
+```
+
+Restart the server with the candidate MoE implementation and capture it:
+
+```bash
+python benchmark/kernels/fused_moe_triton/profile_moe_server_ab.py capture \
+  --url http://127.0.0.1:30000 \
+  --output-dir /shared/profiles/candidate \
+  --profile-id candidate \
+  --steps 50
+```
+
+If the client and server see different filesystem paths, pass the path visible
+to the server with `--server-output-dir`. The measurement request must be long
+enough to remain active for all requested profiling steps.
+
+Compare the rank-0 traces. For speculative decoding, pass the measured average
+accepted tokens per server step to convert the result to milliseconds per
+output token:
+
+```bash
+python benchmark/kernels/fused_moe_triton/profile_moe_server_ab.py compare \
+  --baseline-dir /shared/profiles/native \
+  --candidate-dir /shared/profiles/candidate \
+  --steps 50 \
+  --accepted-tokens-per-step 3.61 \
+  --target-ms-per-output-token 1.12 \
+  --output /shared/profiles/report.json
+```
+
+The report includes summed GPU activity, the union of overlapping GPU activity,
+the per-step and per-output-token deltas, the largest GPU activities, and a
+deterministic output-text hash check. The delta is attributable to MoE only when
+MoE is the sole server difference; the tool does not infer operator ownership
+from kernel names.
