@@ -38,7 +38,7 @@ def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
 
 
 def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
-    _assert_hash_verified_pack(TP4_PACK, rows=42, sources=5)
+    _assert_hash_verified_pack(TP4_PACK, rows=42, sources=4)
     _assert_hash_verified_pack(TP8_PACK, rows=40, sources=8)
 
 
@@ -79,6 +79,7 @@ def test_tp4_related_shapes_share_compile_time_specialized_sources() -> None:
         assert {sources[(shape, mode)] for shape in (32, 64)} == {
             "fused_moe_tp4_m32_64.py"
         }
-        assert {sources[(shape, mode)] for shape in (128, 256)} == {
-            "fused_moe_tp4_m128_256.py"
+        medium_shapes = (128, 256, 1024, 2048, 3072, 4096, 4192)
+        assert {sources[(shape, mode)] for shape in medium_shapes} == {
+            "fused_moe_tp4_m128_4192.py"
         }

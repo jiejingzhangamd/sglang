@@ -1,4 +1,4 @@
-"""Shared TP4 fused-MoE specialization for active batches M=1024 through M=4192."""
+"""Shared TP4 fused-MoE specialization for active batches M=128 through M=4192."""
 
 import torch
 import triton
