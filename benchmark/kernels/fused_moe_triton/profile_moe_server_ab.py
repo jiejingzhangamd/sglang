@@ -20,7 +20,6 @@ from typing import Any
 
 import requests
 
-
 DEFAULT_PROMPT = (
     "Explain why fused mixture-of-experts kernels matter for low-concurrency decode."
 )
