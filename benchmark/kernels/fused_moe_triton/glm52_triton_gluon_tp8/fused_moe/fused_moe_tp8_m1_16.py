@@ -546,123 +546,7 @@ def _token_local_down(X, XS, W, Scales, Ids, Weights, Y, N: gl.constexpr, K: gl.
     gl.store(Y + token * N + n[None, :], result)
 
 @gluon.jit
-def _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H: gl.constexpr, I: gl.constexpr, M: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, SHARED: gl.constexpr, ROUTER_SPLITS: gl.constexpr):
-    BK: gl.constexpr = 128
-    CN: gl.constexpr = 4 * BN
-    if SHARED:
-        expert = gl.cast(256, gl.uint32)
-    else:
-        expert = _expert_at_rank(Logits, Bias, token, rank, ROUTER_SPLITS).to(gl.uint32)
-    route = token * 9 + rank
-    row = token + (M if SHARED else 0)
-    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=False, warps_per_cta=[1, WARPS])
-    dl: gl.constexpr = gl.BlockedLayout([1, 16], [16, 4], [WARPS, 1], [0, 1])
-    wl: gl.constexpr = gl.BlockedLayout([1, 4], [16, 4], [WARPS, 1], [0, 1])
-    sl: gl.constexpr = gl.BlockedLayout([1, 1], [16, 4], [WARPS, 1], [0, 1])
-    ad: gl.constexpr = gl.DotOperandLayout(0, mma, 16)
-    bd: gl.constexpr = gl.DotOperandLayout(1, mma, 16)
-    asl: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(ad, [16, BK // 32])
-    bsl: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(bd, [CN, BK // 32])
-    am = gl.arange(0, 16, gl.SliceLayout(1, dl)).to(gl.uint32)
-    ak = gl.arange(0, BK // 2, gl.SliceLayout(0, dl)).to(gl.uint32)
-    wn = gl.arange(0, CN, gl.SliceLayout(1, wl)).to(gl.uint32)
-    wk = gl.arange(0, BK // 8, gl.SliceLayout(0, wl)).to(gl.uint32) * 8
-    n = tile * BN + wn % BN
-    split = wn // BN
-    sm = gl.arange(0, 16, gl.SliceLayout(1, sl)).to(gl.uint32)
-    sn = gl.arange(0, CN, gl.SliceLayout(1, sl)).to(gl.uint32)
-    sg = gl.arange(0, BK // 32, gl.SliceLayout(0, sl)).to(gl.uint32)
-    scale_n = tile * BN + sn % BN
-    scale_split = sn // BN
-    wb = W.to(gl.pointer_type(gl.uint32)) + expert.to(gl.int64) * (2 * I * H // 8)
-    sb = Scales.to(gl.pointer_type(gl.uint32)) + expert * (2 * I * (H // 32) // 4)
-    gacc = gl.zeros((16, CN), gl.float32, mma)
-    uacc = gl.zeros((16, CN), gl.float32, mma)
-    for base in gl.static_range(H // 4 // BK):
-        start = base * BK
-        a = gl.load(X + row * (H // 2) + am[:, None] % 4 * (H // 8) + start // 2 + ak[None, :])
-        offsets = _weight_offset(0, n[:, None], split[:, None] * (H // 4) + start + wk[None, :], 2 * I, H) // 4
-        offsets = gl.max_contiguous(gl.multiple_of(offsets, [1, 4]), [1, 4])
-        words = gl.amd.cdna4.buffer_load(wb, offsets)
-        uwords = gl.amd.cdna4.buffer_load(wb + I * H // 8, offsets)
-        b = _unpack_weight_words(words, CN, BK, dl)
-        ub = _unpack_weight_words(uwords, CN, BK, dl)
-        aw = gl.load(XS.to(gl.pointer_type(gl.uint32)) + row * (H // 128) + sm % 4 * (H // 512) + start // 128)
-        ax = (aw[:, None] >> sg[None, :] * 8).to(gl.uint8)
-        if base % 2 == 0:
-            sw = gl.amd.cdna4.buffer_load(sb, _scale_offset(0, scale_n[:, None], scale_split[:, None] * (H // 4) + start + sg[None, :] * 32, 2 * I, H) // 4)
-            usw = gl.amd.cdna4.buffer_load(sb + I * (H // 32) // 4, _scale_offset(0, scale_n[:, None], scale_split[:, None] * (H // 4) + start + sg[None, :] * 32, 2 * I, H) // 4)
-        shift = scale_n[:, None] // 16 % 2 * 8 + base % 2 * 16
-        bx = (sw >> shift).to(gl.uint8)
-        ux = (usw >> shift).to(gl.uint8)
-        gacc = gl.amd.cdna4.mfma_scaled(gl.convert_layout(a, ad), gl.convert_layout(ax, asl), 'e2m1', gl.convert_layout(b.T, bd), gl.convert_layout(bx, bsl), 'e2m1', gacc)
-        uacc = gl.amd.cdna4.mfma_scaled(gl.convert_layout(a, ad), gl.convert_layout(ax, asl), 'e2m1', gl.convert_layout(ub.T, bd), gl.convert_layout(ux, bsl), 'e2m1', uacc)
-    gather_layout: gl.constexpr = gl.BlockedLayout([4, 1], [4, 16], [1, WARPS], [1, 0])
-    gate = gl.full((1, BN), 0.0, gl.float32, gather_layout)
-    up = gl.full((1, BN), 0.0, gl.float32, gather_layout)
-    for part in gl.static_range(4):
-        gband = gl.amd.slice(gacc, [16, BN], [0, part * BN])
-        uband = gl.amd.slice(uacc, [16, BN], [0, part * BN])
-        gband = gl.convert_layout(gband, gather_layout)
-        uband = gl.convert_layout(uband, gather_layout)
-        idx = gl.full((1, BN), part, gl.int32, gather_layout)
-        gpart = gl.gather(gband, idx, 0)
-        upart = gl.gather(uband, idx, 0)
-        if part == 0:
-            gate = gpart
-            up = upart
-        else:
-            gate += gpart
-            up += upart
-    if SHARED:
-        gate = gate.to(gl.bfloat16).to(gl.float32)
-        up = up.to(gl.bfloat16).to(gl.float32)
-    activated = (gate * (1.0 / (1.0 + gl.exp(-gate))) * up).to(gl.bfloat16).to(gl.float32)
-    qlayout: gl.constexpr = gl.BlockedLayout([1, 2], [4, 16], [WARPS, 1], [1, 0])
-    activated = gl.convert_layout(activated.reshape((BN // 32, 32)), qlayout)
-    q, scale = _quantize_groups(activated, SHARED, NATIVE=M == 4)
-    g = tile * (BN // 32) + gl.arange(0, BN // 32, gl.SliceLayout(1, q.type.layout))
-    k = g[:, None] * 16 + gl.arange(0, 16, gl.SliceLayout(0, q.type.layout))[None, :]
-    gl.store(AQ + route * (I // 2) + k, q)
-    gl.store(AQS + route * (I // 32) + g, scale)
-
-@gluon.jit
-def _select_fused_up(Logits, Bias, Ids, Weights, X, XS, W, Scales, AQ, AQS, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, ROUTER_SPLITS: gl.constexpr):
-    pid = gl.program_id(0)
-    if pid < M:
-        _select_routes(Logits, Bias, Ids, Weights, None, ROUTER_SPLITS, False)
-    else:
-        work = pid - M
-        tile = work % (I // BN)
-        job = work // (I // BN)
-        token = job % M
-        rank = job // M
-        if rank == 8:
-            _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, 8, tile, H, I, M, BN, WARPS, True, ROUTER_SPLITS)
-        else:
-            _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H, I, M, BN, WARPS, False, ROUTER_SPLITS)
-
-@gluon.jit
-def _static_single_down(X, XS, W, Scales, Ids, Weights, Y, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr):
-    token = 0
-    tile = gl.program_id(1)
-    acc = _down_accumulator(X, XS, W, Scales, Ids, token, tile, N, K, BN, WARPS, 16, STATIC_SHARED=True)
-    layout: gl.constexpr = gl.BlockedLayout([4, 1], [4, 16], [1, WARPS], [1, 0])
-    result = gl.full((1, BN), 0.0, gl.float32, layout)
-    for j in gl.static_range(9):
-        band = gl.amd.slice(acc, [16, BN], [0, j * BN])
-        band = gl.convert_layout(band, layout)
-        part = gl.gather(band, gl.full((1, BN), j, gl.int32, layout), 0)
-        if j == 8:
-            part = part.to(gl.bfloat16).to(gl.float32)
-            result += part
-        else:
-            result += part * gl.load(Weights + token * 9 + j)
-    n = tile * BN + gl.arange(0, BN, gl.SliceLayout(0, layout))
-    gl.store(Y + token * N + n[None, :], result)
-
-@gluon.jit
-def _fused_m16_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H: gl.constexpr, I: gl.constexpr, M: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, SHARED: gl.constexpr, ROUTER_SPLITS: gl.constexpr):
+def _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H: gl.constexpr, I: gl.constexpr, M: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, SHARED: gl.constexpr, ROUTER_SPLITS: gl.constexpr, NATIVE_QUANT: gl.constexpr):
     BK: gl.constexpr = 128
     WINDOW: gl.constexpr = 2
     CN: gl.constexpr = 4 * BN
@@ -740,14 +624,14 @@ def _fused_m16_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, til
     activated = (gate * (1.0 / (1.0 + gl.exp(-gate))) * up).to(gl.bfloat16).to(gl.float32)
     qlayout: gl.constexpr = gl.BlockedLayout([1, 2], [4, 16], [WARPS, 1], [1, 0])
     activated = gl.convert_layout(activated.reshape((BN // 32, 32)), qlayout)
-    q, scale = _quantize_groups(activated, SHARED)
+    q, scale = _quantize_groups(activated, SHARED, NATIVE=NATIVE_QUANT)
     g = tile * (BN // 32) + gl.arange(0, BN // 32, gl.SliceLayout(1, q.type.layout))
     k = g[:, None] * 16 + gl.arange(0, 16, gl.SliceLayout(0, q.type.layout))[None, :]
     gl.store(AQ + route * (I // 2) + k, q)
     gl.store(AQS + route * (I // 32) + g, scale)
 
 @gluon.jit
-def _select_fused_m16(Logits, Bias, Ids, Weights, X, XS, W, Scales, AQ, AQS, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, ROUTER_SPLITS: gl.constexpr):
+def _select_fused_up(Logits, Bias, Ids, Weights, X, XS, W, Scales, AQ, AQS, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, ROUTER_SPLITS: gl.constexpr, NATIVE_QUANT: gl.constexpr, PAIR_ORDER: gl.constexpr):
     pid = gl.program_id(0)
     if pid < M:
         _select_routes(Logits, Bias, Ids, Weights, None, ROUTER_SPLITS, False)
@@ -757,11 +641,31 @@ def _select_fused_m16(Logits, Bias, Ids, Weights, X, XS, W, Scales, AQ, AQS, M: 
         job = work // (I // BN)
         token = job % M
         rank = job // M
-        rank = gl.where(rank < 8, gl.where(rank % 2 == 0, rank // 2, 7 - rank // 2), 8)
+        if PAIR_ORDER:
+            rank = gl.where(rank < 8, gl.where(rank % 2 == 0, rank // 2, 7 - rank // 2), 8)
         if rank == 8:
-            _fused_m16_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, 8, tile, H, I, M, BN, WARPS, True, ROUTER_SPLITS)
+            _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, 8, tile, H, I, M, BN, WARPS, True, ROUTER_SPLITS, NATIVE_QUANT)
         else:
-            _fused_m16_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H, I, M, BN, WARPS, False, ROUTER_SPLITS)
+            _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H, I, M, BN, WARPS, False, ROUTER_SPLITS, NATIVE_QUANT)
+
+@gluon.jit
+def _static_single_down(X, XS, W, Scales, Ids, Weights, Y, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr):
+    token = 0
+    tile = gl.program_id(1)
+    acc = _down_accumulator(X, XS, W, Scales, Ids, token, tile, N, K, BN, WARPS, 16, STATIC_SHARED=True)
+    layout: gl.constexpr = gl.BlockedLayout([4, 1], [4, 16], [1, WARPS], [1, 0])
+    result = gl.full((1, BN), 0.0, gl.float32, layout)
+    for j in gl.static_range(9):
+        band = gl.amd.slice(acc, [16, BN], [0, j * BN])
+        band = gl.convert_layout(band, layout)
+        part = gl.gather(band, gl.full((1, BN), j, gl.int32, layout), 0)
+        if j == 8:
+            part = part.to(gl.bfloat16).to(gl.float32)
+            result += part
+        else:
+            result += part * gl.load(Weights + token * 9 + j)
+    n = tile * BN + gl.arange(0, BN, gl.SliceLayout(0, layout))
+    gl.store(Y + token * N + n[None, :], result)
 
 @gluon.jit
 def _paired_panel_accumulator(X, XS, W, Scales, Ids, token, tile, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, RANK_BASE: gl.constexpr):
@@ -862,11 +766,11 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch
     out = empty((m, h))
     _router_linear[16 * router_splits + m * (h // (32 * quant_groups)) + int(grouped),](x, router, logits, xq, xs, groups, h, x.stride(0), m, router_splits, router_block, 16, grouped, quant_vector, quant_groups, NATIVE=m == 2, num_warps=1)
     if m == 16:
-        _select_fused_m16[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 1, router_splits, num_warps=1, enable_fp_fusion=False)
+        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 1, router_splits, False, True, num_warps=1, enable_fp_fusion=False)
         _stream_paired_down[16 * (m // 2), h // (64 * 16)](aq, aqs, w2, w2_scale, ids, weights, out, h, intermediate, 64, 4, TILE_GROUP=16, num_warps=4, enable_fp_fusion=False)
         return out
     if m in (4, 8):
-        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 2, router_splits, num_warps=2, enable_fp_fusion=False)
+        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 2, router_splits, m == 4, False, num_warps=2, enable_fp_fusion=False)
         tail_width, tail_warps = (64, 4)
         tail_group = 16 if m == 8 else 96
         tail_grid = (tail_group * m, h // (tail_width * tail_group)) if m == 8 else (h // tail_width, m)

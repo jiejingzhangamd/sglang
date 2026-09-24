@@ -267,7 +267,8 @@ gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 42 target and
 MTP/draft dispatch entries backed by four source files. The TP8 profile has 40
 entries backed by eight source files. Relative to the per-shape snapshot, TP4
 uses 4 instead of 20 source files and 2,086 instead of 10,576 kernel lines
-(-80.3%).
+(-80.3%). TP8 uses 8 instead of 18 source files and 3,772 instead of 7,966
+kernel lines (-52.6%).
 Related active-batch shapes share a kernel implementation, while tile sizes,
 warp counts, splits, grouping, and other shape-specific choices remain static
 or `gl.constexpr` values so Triton specializes them at compile time. Each
