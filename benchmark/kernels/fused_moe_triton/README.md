@@ -208,3 +208,78 @@ The benchmark results will be saved as plots and data files in the specified out
 - `benchmark_torch_compile_fused_moe.py`: A tool for benchmarking the performance of the fused MoE kernel with `torch.compile` and original fused MoE kernel.
 
 Usage is similar to `benchmark_vllm_vs_sglang_fused_moe_triton.py`, note that `torch.compile` does not support `fp8_w8a8` and `int8_w8a8` fused_moe_kernel. Both tools now support EP mode with `--ep-size` parameter.
+
+### Server Trace A/B Tool
+
+`profile_moe_server_ab.py` measures the aggregate GPU-time change of a MoE-only
+server modification. It captures the same deterministic decode window from a
+baseline and candidate server, then compares the rank-local GPU activity. Keep
+all server arguments identical except for the MoE implementation under test.
+
+Capture the baseline while its server is running:
+
+```bash
+python benchmark/kernels/fused_moe_triton/profile_moe_server_ab.py capture \
+  --url http://127.0.0.1:30000 \
+  --output-dir /shared/profiles/native \
+  --profile-id native \
+  --steps 50
+```
+
+Restart the server with the candidate MoE implementation and capture it:
+
+```bash
+python benchmark/kernels/fused_moe_triton/profile_moe_server_ab.py capture \
+  --url http://127.0.0.1:30000 \
+  --output-dir /shared/profiles/candidate \
+  --profile-id candidate \
+  --steps 50
+```
+
+If the client and server see different filesystem paths, pass the path visible
+to the server with `--server-output-dir`. The measurement request must be long
+enough to remain active for all requested profiling steps.
+
+Compare the rank-0 traces. For speculative decoding, pass the measured average
+accepted tokens per server step to convert the result to milliseconds per
+output token:
+
+```bash
+python benchmark/kernels/fused_moe_triton/profile_moe_server_ab.py compare \
+  --baseline-dir /shared/profiles/native \
+  --candidate-dir /shared/profiles/candidate \
+  --steps 50 \
+  --accepted-tokens-per-step 3.61 \
+  --target-ms-per-output-token 1.12 \
+  --output /shared/profiles/report.json
+```
+
+The report includes summed GPU activity, the union of overlapping GPU activity,
+the per-step and per-output-token deltas, the largest GPU activities, and a
+deterministic output-text hash check. The delta is attributable to MoE only when
+MoE is the sole server difference; the tool does not infer operator ownership
+from kernel names.
+
+### GLM-5.2 Triton Gluon TP4 and TP8 kernel snapshots
+
+`glm52_triton_gluon_tp4/` and `glm52_triton_gluon_tp8/` contain the consolidated
+gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 42 target and
+MTP/draft dispatch entries backed by four source files. The TP8 profile has 48
+entries backed by eight source files. Relative to the per-shape snapshot, TP4
+uses 4 instead of 20 source files and 2,086 instead of 10,576 kernel lines
+(-80.3%). TP8 uses 8 instead of 18 source files and 3,772 instead of 7,966
+kernel lines (-52.6%).
+Related active-batch shapes share a kernel implementation, while tile sizes,
+warp counts, splits, grouping, and other shape-specific choices remain static
+or `gl.constexpr` values so Triton specializes them at compile time. The compact
+schema-v3 profiles record common source, SHA-256, and semantics once per shape
+family. Use `profile_schema.load_profile()` (or run `profile_schema.py` as a
+CLI) to expand them into the flat `specializations` rows accepted by existing
+schema-v2 consumers. The CPU test expands both profiles and verifies the
+recorded source digests without importing GPU dependencies.
+
+The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
+the `fused_moe` entry point expected by the GLM-5.2 integration; server-side
+binding and weight packing remain outside this benchmark bundle. This directory
+is a reproducible kernel snapshot for the A/B benchmark, not a replacement for
+SGLang's native MoE dispatch.
