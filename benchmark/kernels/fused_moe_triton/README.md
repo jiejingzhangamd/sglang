@@ -271,9 +271,12 @@ uses 4 instead of 20 source files and 2,086 instead of 10,576 kernel lines
 kernel lines (-52.6%).
 Related active-batch shapes share a kernel implementation, while tile sizes,
 warp counts, splits, grouping, and other shape-specific choices remain static
-or `gl.constexpr` values so Triton specializes them at compile time. Each
-profile row records the SHA-256 of its source file so the kernel set can be
-verified without importing GPU dependencies.
+or `gl.constexpr` values so Triton specializes them at compile time. The compact
+schema-v3 profiles record common source, SHA-256, and semantics once per shape
+family. Use `profile_schema.load_profile()` (or run `profile_schema.py` as a
+CLI) to expand them into the flat `specializations` rows accepted by existing
+schema-v2 consumers. The CPU test expands both profiles and verifies the
+recorded source digests without importing GPU dependencies.
 
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
 the `fused_moe` entry point expected by the GLM-5.2 integration; server-side

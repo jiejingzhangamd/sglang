@@ -4,6 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 
+from benchmark.kernels.fused_moe_triton.profile_schema import (
+    expand_profile,
+    load_profile,
+)
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=5, suite="base-a-test-cpu")
@@ -15,8 +19,35 @@ TP4_PACK = PACK_ROOT / "glm52_triton_gluon_tp4"
 TP8_PACK = PACK_ROOT / "glm52_triton_gluon_tp8"
 
 
+def test_compact_profile_expands_to_schema_v2_rows() -> None:
+    compact = {
+        "schema_version": 3,
+        "variant": "test.variant",
+        "default_semantics": {"contract": {"family": "moe"}},
+        "families": [
+            {
+                "source_file": "kernel.py",
+                "source_sha256": "digest",
+                "cases": [
+                    ["exact", [1, 0, 0]],
+                    ["range", [2, 1, 0], {"0": [2, 4]}, {"contract": {}}],
+                ],
+            }
+        ],
+    }
+
+    expanded = expand_profile(compact)
+    exact, ranged = expanded["specializations"]
+    assert expanded["schema_version"] == 2
+    assert exact["semantics"] == {"contract": {"family": "moe"}}
+    assert "signature_ranges" not in exact
+    assert ranged["signature_ranges"] == {"0": [2, 4]}
+    assert ranged["semantics"] == {"contract": {}}
+    assert expand_profile(expanded) is expanded
+
+
 def _load_profile(pack: Path) -> dict:
-    return json.loads((pack / "profile.json").read_text())
+    return load_profile(pack / "profile.json")
 
 
 def _exact_source_map(pack: Path) -> dict[tuple[int, int], str]:
@@ -32,8 +63,7 @@ def _resolve_source(profile: dict, signature: tuple[int, ...]) -> str:
     exact_matches = [
         row
         for row in rows
-        if not row.get("signature_ranges")
-        and tuple(row["signature"]) == signature
+        if not row.get("signature_ranges") and tuple(row["signature"]) == signature
     ]
     if exact_matches:
         assert len(exact_matches) == 1
@@ -62,9 +92,16 @@ def _resolve_source(profile: dict, signature: tuple[int, ...]) -> str:
 
 
 def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
+    compact_profile = json.loads((pack / "profile.json").read_text())
+    assert compact_profile["schema_version"] == 3
+    assert "specializations" not in compact_profile
+    assert len(compact_profile["families"]) == sources
+    assert sum(len(family["cases"]) for family in compact_profile["families"]) == rows
+
     profile = _load_profile(pack)
     specializations = profile["specializations"]
 
+    assert profile["schema_version"] == 2
     assert profile["variant"] == "glm52.fused_moe"
     assert len(specializations) == rows
     assert {row["signature"][1] for row in specializations} == {0, 1}
