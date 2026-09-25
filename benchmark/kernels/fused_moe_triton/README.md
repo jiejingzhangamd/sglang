@@ -264,7 +264,7 @@ from kernel names.
 
 `glm52_triton_gluon_tp4/` and `glm52_triton_gluon_tp8/` contain the consolidated
 gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 42 target and
-MTP/draft dispatch entries backed by four source files. The TP8 profile has 40
+MTP/draft dispatch entries backed by four source files. The TP8 profile has 48
 entries backed by eight source files. Relative to the per-shape snapshot, TP4
 uses 4 instead of 20 source files and 2,086 instead of 10,576 kernel lines
 (-80.3%). TP8 uses 8 instead of 18 source files and 3,772 instead of 7,966

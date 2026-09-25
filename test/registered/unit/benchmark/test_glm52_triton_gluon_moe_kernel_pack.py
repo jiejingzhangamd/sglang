@@ -15,8 +15,54 @@ TP4_PACK = PACK_ROOT / "glm52_triton_gluon_tp4"
 TP8_PACK = PACK_ROOT / "glm52_triton_gluon_tp8"
 
 
+def _load_profile(pack: Path) -> dict:
+    return json.loads((pack / "profile.json").read_text())
+
+
+def _exact_source_map(pack: Path) -> dict[tuple[int, int], str]:
+    return {
+        tuple(row["signature"][:2]): Path(row["source_file"]).name
+        for row in _load_profile(pack)["specializations"]
+        if not row.get("signature_ranges")
+    }
+
+
+def _resolve_source(profile: dict, signature: tuple[int, ...]) -> str:
+    rows = profile["specializations"]
+    exact_matches = [
+        row
+        for row in rows
+        if not row.get("signature_ranges")
+        and tuple(row["signature"]) == signature
+    ]
+    if exact_matches:
+        assert len(exact_matches) == 1
+        return Path(exact_matches[0]["source_file"]).name
+
+    range_matches = []
+    for row in rows:
+        ranges = row.get("signature_ranges")
+        if not ranges or len(row["signature"]) != len(signature):
+            continue
+
+        matches = True
+        for index, actual in enumerate(signature):
+            bounds = ranges.get(str(index))
+            if bounds is None:
+                matches = matches and actual == row["signature"][index]
+            else:
+                matches = matches and bounds[0] <= actual <= bounds[1]
+        if matches:
+            range_matches.append(row)
+
+    assert len(range_matches) == 1, (
+        f"expected one source for signature {signature}, got {len(range_matches)}"
+    )
+    return Path(range_matches[0]["source_file"]).name
+
+
 def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
-    profile = json.loads((pack / "profile.json").read_text())
+    profile = _load_profile(pack)
     specializations = profile["specializations"]
 
     assert profile["variant"] == "glm52.fused_moe"
@@ -43,37 +89,34 @@ def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
 
 
 def test_related_shapes_share_compile_time_specialized_sources() -> None:
-    profile = json.loads((TP8_PACK / "profile.json").read_text())
-    sources = {
-        tuple(row["signature"][:2]): Path(row["source_file"]).name
-        for row in profile["specializations"]
-        if not row.get("signature_ranges")
-    }
+    sources = _exact_source_map(TP8_PACK)
+    families = (
+        ((1, 2, 4, 8, 16), 0, "fused_moe_tp8_m1_16.py"),
+        ((32, 64, 128), 0, "fused_moe_tp8_m32_128.py"),
+        ((1, 2, 4, 6, 8, 12, 16), 1, "fused_moe_tp8_m1_16_mtp.py"),
+        (
+            (24, 32, 48, 64, 96, 128, 192, 256, 384, 768),
+            1,
+            "fused_moe_tp8_m32_256_mtp.py",
+        ),
+    )
 
-    assert {sources[(shape, 0)] for shape in (1, 2, 4, 8, 16)} == {
-        "fused_moe_tp8_m1_16.py"
-    }
-    assert {sources[(shape, 0)] for shape in (32, 64, 128)} == {
-        "fused_moe_tp8_m32_128.py"
-    }
-    assert {sources[(shape, 1)] for shape in (1, 2, 4, 6, 8, 12, 16)} == {
-        "fused_moe_tp8_m1_16_mtp.py"
-    }
-    assert {
-        sources[(shape, 1)]
-        for shape in (24, 32, 48, 64, 96, 128, 192, 256, 384, 768)
-    } == {
-        "fused_moe_tp8_m32_256_mtp.py"
-    }
+    for shapes, mode, expected_source in families:
+        assert {sources[(shape, mode)] for shape in shapes} == {expected_source}
+
+
+def test_tp8_mtp_product_shapes_resolve_to_large_mtp_source() -> None:
+    profile = _load_profile(TP8_PACK)
+    expected_source = "fused_moe_tp8_m1024_4192_mtp.py"
+
+    for batch_size in (341, 561):
+        for draft_width in (4, 6):
+            signature = (batch_size * draft_width, 1, 0)
+            assert _resolve_source(profile, signature) == expected_source
 
 
 def test_tp4_related_shapes_share_compile_time_specialized_sources() -> None:
-    profile = json.loads((TP4_PACK / "profile.json").read_text())
-    sources = {
-        tuple(row["signature"][:2]): Path(row["source_file"]).name
-        for row in profile["specializations"]
-        if not row.get("signature_ranges")
-    }
+    sources = _exact_source_map(TP4_PACK)
 
     for mode in (0, 1):
         assert {sources[(shape, mode)] for shape in (1, 2, 4, 8, 16)} == {
