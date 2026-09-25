@@ -1,4 +1,4 @@
-"""GLM-5.2 TP8 MTP fused MoE specialization for M=32..256."""
+"""GLM-5.2 TP8 MTP fused MoE for selected M=24..768 product shapes."""
 
 import torch
 import triton

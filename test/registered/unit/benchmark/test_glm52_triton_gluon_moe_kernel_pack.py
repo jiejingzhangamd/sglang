@@ -39,7 +39,7 @@ def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
 
 def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
     _assert_hash_verified_pack(TP4_PACK, rows=42, sources=4)
-    _assert_hash_verified_pack(TP8_PACK, rows=40, sources=8)
+    _assert_hash_verified_pack(TP8_PACK, rows=48, sources=8)
 
 
 def test_related_shapes_share_compile_time_specialized_sources() -> None:
@@ -56,10 +56,13 @@ def test_related_shapes_share_compile_time_specialized_sources() -> None:
     assert {sources[(shape, 0)] for shape in (32, 64, 128)} == {
         "fused_moe_tp8_m32_128.py"
     }
-    assert {sources[(shape, 1)] for shape in (1, 2, 4, 8, 16)} == {
+    assert {sources[(shape, 1)] for shape in (1, 2, 4, 6, 8, 12, 16)} == {
         "fused_moe_tp8_m1_16_mtp.py"
     }
-    assert {sources[(shape, 1)] for shape in (32, 64, 128, 256)} == {
+    assert {
+        sources[(shape, 1)]
+        for shape in (24, 32, 48, 64, 96, 128, 192, 256, 384, 768)
+    } == {
         "fused_moe_tp8_m32_256_mtp.py"
     }
 
