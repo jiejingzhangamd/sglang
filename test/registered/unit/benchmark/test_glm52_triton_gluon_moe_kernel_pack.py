@@ -122,7 +122,7 @@ def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
 
 def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
     _assert_hash_verified_pack(TP4_PACK, rows=42, sources=4)
-    _assert_hash_verified_pack(TP8_PACK, rows=48, sources=8)
+    _assert_hash_verified_pack(TP8_PACK, rows=57, sources=8)
 
 
 def test_related_shapes_share_compile_time_specialized_sources() -> None:
@@ -132,7 +132,27 @@ def test_related_shapes_share_compile_time_specialized_sources() -> None:
         ((32, 64, 128), 0, "fused_moe_tp8_m32_128.py"),
         ((1, 2, 4, 6, 8, 12, 16), 1, "fused_moe_tp8_m1_16_mtp.py"),
         (
-            (24, 32, 48, 64, 96, 128, 192, 256, 384, 768),
+            (
+                18,
+                20,
+                24,
+                28,
+                30,
+                32,
+                36,
+                40,
+                42,
+                48,
+                54,
+                60,
+                64,
+                96,
+                128,
+                192,
+                256,
+                384,
+                768,
+            ),
             1,
             "fused_moe_tp8_m32_256_mtp.py",
         ),
@@ -140,6 +160,16 @@ def test_related_shapes_share_compile_time_specialized_sources() -> None:
 
     for shapes, mode, expected_source in families:
         assert {sources[(shape, mode)] for shape in shapes} == {expected_source}
+
+
+def test_tp8_agentx_mtp_shapes_cover_concurrency_one_through_ten() -> None:
+    sources = _exact_source_map(TP8_PACK)
+
+    for draft_width in (4, 6):
+        assert all(
+            (batch_size * draft_width, 1) in sources
+            for batch_size in range(1, 11)
+        )
 
 
 def test_tp8_mtp_product_shapes_resolve_to_large_mtp_source() -> None:
