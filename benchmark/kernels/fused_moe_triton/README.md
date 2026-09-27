@@ -284,6 +284,12 @@ coverage without importing GPU dependencies.
 
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
 the `fused_moe` entry point expected by the GLM-5.2 integration; server-side
-binding and weight packing remain outside this benchmark bundle. This directory
-is a reproducible kernel snapshot for the A/B benchmark, not a replacement for
-SGLang's native MoE dispatch.
+weight packing remains outside this benchmark bundle. An out-of-tree adapter
+can bind a compatible implementation through
+`DeepseekV2MoE.register_custom_local_moe_forward()`: the provider returns the
+rank-local routed-plus-shared output, while SGLang retains the native
+post-expert collective. Layers using replicated TP1 shared experts, and calls
+where the provider returns `None`, stay on SGLang's native MoE path. This
+directory is a reproducible
+kernel snapshot for the A/B benchmark, not a replacement for SGLang's native
+MoE dispatch.

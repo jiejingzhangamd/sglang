@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager, nullcontext
 from functools import cached_property
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -621,6 +621,9 @@ class DeepseekV2MoE(nn.Module):
             and get_platform().is_blackwell
             and self.tp_size == 4
         )
+        self._custom_local_moe_forward: Optional[
+            Callable[..., Optional[torch.Tensor]]
+        ] = None
 
         n_hash_layers = getattr(config, "num_hash_layers", 0)
         self.is_hash = layer_id < n_hash_layers and not (is_deepseek_v4 and is_nextn)
@@ -1228,6 +1231,53 @@ class DeepseekV2MoE(nn.Module):
             final_hidden_states += shared_output
         return final_hidden_states
 
+    def register_custom_local_moe_forward(
+        self, forward: Callable[..., Optional[torch.Tensor]]
+    ) -> None:
+        """Register an optional fused local-MoE implementation.
+
+        The callback receives the same arguments as :meth:`forward_normal` and
+        returns either ``None`` to use the native path or a local output that
+        already includes routed and shared experts. SGLang retains ownership of
+        the post-expert collective. Layers with replicated TP1 shared experts
+        stay on the native path so their post-collective addition is preserved.
+
+        Registration is intentionally one-shot: silently replacing an active
+        provider after weights or CUDA graphs have been prepared is unsafe.
+        """
+
+        if self._custom_local_moe_forward is not None:
+            raise RuntimeError("A custom local MoE forward is already registered")
+        self._custom_local_moe_forward = forward
+
+    def _finalize_normal_output(
+        self,
+        final_hidden_states: torch.Tensor,
+        shared_output: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if (
+            self.is_deepseek_v4
+            and self.tp_size > 1
+            and not should_skip_post_experts_all_reduce(is_tp_path=True)
+        ):
+            from sglang.srt.layers.moe.mhc_post_fusion import (
+                current_mhc_post_fusion,
+            )
+
+            mhc = current_mhc_post_fusion()
+            if mhc is not None:
+                mhc.start_stats_before_all_reduce()
+        final_hidden_states = post_experts_all_reduce(final_hidden_states)
+        # TP1 shared experts are replicated, so add them after all-reduce to
+        # avoid summing the same shared output once per TP rank.
+        if (
+            shared_output is not None
+            and self._shared_expert_tp1
+            and should_add_replicated_moe_output()
+        ):
+            final_hidden_states += shared_output
+        return final_hidden_states
+
     def forward_normal(
         self,
         hidden_states: torch.Tensor,
@@ -1241,6 +1291,26 @@ class DeepseekV2MoE(nn.Module):
             self.shared_experts.gate_up_proj
         ):
             return self.forward_cpu(hidden_states)
+        if self._custom_local_moe_forward is not None and not self._shared_expert_tp1:
+            custom_output = self._custom_local_moe_forward(
+                hidden_states,
+                gemm_output_zero_allocator=gemm_output_zero_allocator,
+                input_ids=input_ids,
+                input_ids_global=input_ids_global,
+                skip_shared_experts=skip_shared_experts,
+                num_token_non_padded=num_token_non_padded,
+            )
+            if custom_output is not None:
+                if (
+                    not isinstance(custom_output, torch.Tensor)
+                    or custom_output.shape != hidden_states.shape
+                    or custom_output.dtype != hidden_states.dtype
+                    or custom_output.device != hidden_states.device
+                ):
+                    raise RuntimeError(
+                        "Custom local MoE output must match the input tensor contract"
+                    )
+                return self._finalize_normal_output(custom_output, None)
         dispatch_info = (
             ExpertLocationDispatchInfo.init_new(layer_id=self.layer_id)
             if get_exec().moe.enable_eplb and not self.is_nextn
@@ -1367,26 +1437,7 @@ class DeepseekV2MoE(nn.Module):
             self.routed_scaling_factor,
         )
 
-        if (
-            self.is_deepseek_v4
-            and self.tp_size > 1
-            and not should_skip_post_experts_all_reduce(is_tp_path=True)
-        ):
-            from sglang.srt.layers.moe.mhc_post_fusion import current_mhc_post_fusion
-
-            mhc = current_mhc_post_fusion()
-            if mhc is not None:
-                mhc.start_stats_before_all_reduce()
-        final_hidden_states = post_experts_all_reduce(final_hidden_states)
-        # TP1 shared experts are replicated, so add them after all-reduce to
-        # avoid summing the same shared output once per TP rank.
-        if (
-            shared_output is not None
-            and self._shared_expert_tp1
-            and should_add_replicated_moe_output()
-        ):
-            final_hidden_states += shared_output
-        return final_hidden_states
+        return self._finalize_normal_output(final_hidden_states, shared_output)
 
     def forward_cpu(
         self,
