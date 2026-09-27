@@ -295,3 +295,11 @@ layer/call shape, or invalid output is an error; this backend never silently
 falls back to native MoE. This directory is a reproducible
 kernel snapshot for the A/B benchmark, not a replacement for SGLang's native
 MoE dispatch.
+
+The same MoE sources also support the serialized Quark MXFP4 GLM-5.3
+checkpoint: its routed and shared experts retain the GLM-5.2 ABI (hidden size
+6144, intermediate size 2048, 256 routed experts, top-8 routing, one shared
+expert, and identical packed-weight/scale tensor metadata). Integrations must
+select a GLM-5.3 MoE-only profile so unrelated GLM-5.2 attention kernels are
+not installed. The GLM-5.3 checkpoint may retain its native FP8 attention, but
+FP8 or BF16 expert weights remain unsupported by this MoE bundle.
