@@ -926,6 +926,24 @@ class DeepseekV2MoE(nn.Module):
     ) -> torch.Tensor:
         from sglang.srt.layers.moe.mega_moe import forward_mega_moe, should_use_mega_moe
 
+        num_token_non_padded = (
+            forward_batch.moe_num_token_non_padded()
+            if forward_batch is not None
+            else None
+        )
+        # Gluon is a strict whole-layer backend.  Select it before MegaMoE,
+        # DeepEP, or CUDA-graph dual-stream routing so none of those paths can
+        # bypass the bound implementation and silently execute native MoE.
+        if get_moe_runner_backend().is_gluon():
+            return self.forward_normal(
+                hidden_states,
+                gemm_output_zero_allocator,
+                input_ids,
+                input_ids_global=input_ids_global,
+                skip_shared_experts=skip_shared_experts,
+                num_token_non_padded=num_token_non_padded,
+            )
+
         if should_use_mega_moe(self, hidden_states):
             return forward_mega_moe(
                 self,
@@ -934,11 +952,6 @@ class DeepseekV2MoE(nn.Module):
                 input_ids_global=input_ids_global,
             )
 
-        num_token_non_padded = (
-            forward_batch.moe_num_token_non_padded()
-            if forward_batch is not None
-            else None
-        )
         if not self._enable_a2a_moe:
             if self._can_dual_stream_graph(hidden_states):
                 fwd = get_forward()
@@ -1286,10 +1299,6 @@ class DeepseekV2MoE(nn.Module):
         skip_shared_experts: bool = False,
         num_token_non_padded: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if hasattr(self, "shared_experts") and use_intel_amx_backend(
-            self.shared_experts.gate_up_proj
-        ):
-            return self.forward_cpu(hidden_states)
         if get_moe_runner_backend().is_gluon():
             if self._gluon_moe_backend is None:
                 raise RuntimeError(
@@ -1314,6 +1323,10 @@ class DeepseekV2MoE(nn.Module):
                     "Gluon MoE output must match the input tensor contract"
                 )
             return self._finalize_normal_output(custom_output, None)
+        if hasattr(self, "shared_experts") and use_intel_amx_backend(
+            self.shared_experts.gate_up_proj
+        ):
+            return self.forward_cpu(hidden_states)
         dispatch_info = (
             ExpertLocationDispatchInfo.init_new(layer_id=self.layer_id)
             if get_exec().moe.enable_eplb and not self.is_nextn

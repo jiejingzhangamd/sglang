@@ -59,6 +59,22 @@ def test_gluon_backend_missing_implementation_raises(monkeypatch):
         moe.forward_normal(torch.zeros((2, 4), dtype=torch.bfloat16))
 
 
+def test_gluon_backend_is_selected_before_other_forward_paths(monkeypatch):
+    moe = _moe_shell()
+    monkeypatch.setattr(deepseek_v2, "get_moe_runner_backend", lambda: _Gluon())
+
+    def reject_mega_moe(*_args, **_kwargs):
+        raise AssertionError("MegaMoE selection must not run for Gluon")
+
+    monkeypatch.setattr(
+        "sglang.srt.layers.moe.mega_moe.should_use_mega_moe",
+        reject_mega_moe,
+    )
+
+    with pytest.raises(RuntimeError, match="no Gluon implementation was bound"):
+        moe.forward(torch.zeros((2, 4), dtype=torch.bfloat16))
+
+
 def test_gluon_backend_rejects_invalid_output(monkeypatch):
     moe = _moe_shell()
     monkeypatch.setattr(deepseek_v2, "get_moe_runner_backend", lambda: _Gluon())
