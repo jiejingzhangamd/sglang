@@ -1416,6 +1416,13 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
             # DeepGEMM directly instead of dispatching through a MoeRunner.
             return
 
+        # Gluon is a whole-layer backend: it fuses routing, routed experts, and
+        # shared experts before the ordinary FusedMoE dispatcher boundary.
+        # DeepseekV2MoE requires an implementation to bind before first forward.
+        if moe_runner_backend.is_gluon():
+            self.runner = None
+            return
+
         if moe_runner_backend.is_auto():
             # Must match apply() priority: _use_aiter before use_triton_kernels.
             if _use_aiter and get_moe_a2a_backend().supports_aiter():
