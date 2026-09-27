@@ -89,6 +89,10 @@ class _Gluon:
     def is_gluon():
         return True
 
+    @staticmethod
+    def is_auto():
+        return False
+
 
 def test_gluon_backend_rejects_fp8_quant_method(monkeypatch):
     from sglang.srt.layers.moe.fused_moe_triton import layer as fused_moe_layer
@@ -113,3 +117,19 @@ def test_gluon_backend_accepts_serialized_quark_mxfp4(monkeypatch):
     quant_method = object.__new__(QuarkFusedMoEMethod)
 
     _validate_gluon_quant_method(layer, quant_method)
+
+
+def test_gluon_backend_owns_quark_mxfp4_weight_layout(monkeypatch):
+    from sglang.srt.layers.moe import utils as moe_utils
+    from sglang.srt.layers.quantization.quark.schemes.quark_w4a4_mxfp4_moe import (
+        QuarkW4A4MXFp4MoE,
+    )
+
+    monkeypatch.setattr(moe_utils, "get_moe_runner_backend", lambda: _Gluon())
+    scheme = object.__new__(QuarkW4A4MXFp4MoE)
+
+    scheme.create_moe_runner(layer=object(), moe_runner_config=object())
+
+    assert scheme.runner is None
+    assert not scheme._owns_moe_runner
+    assert scheme._owns_moe_weight_layout
