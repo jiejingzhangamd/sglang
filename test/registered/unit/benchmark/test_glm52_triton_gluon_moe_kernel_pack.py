@@ -167,8 +167,7 @@ def test_tp8_agentx_mtp_shapes_cover_concurrency_one_through_ten() -> None:
 
     for draft_width in (4, 6):
         assert all(
-            (batch_size * draft_width, 1) in sources
-            for batch_size in range(1, 11)
+            (batch_size * draft_width, 1) in sources for batch_size in range(1, 11)
         )
 
 
