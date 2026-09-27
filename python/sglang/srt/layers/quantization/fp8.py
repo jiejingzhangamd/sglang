@@ -2761,6 +2761,16 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
         moe_runner_backend = get_moe_runner_backend()
 
+        # DeepSeek-V4 keeps its hash-routed prefix on the native AMD path even
+        # when later layers use the strict whole-layer Gluon backend.
+        if moe_runner_backend.is_gluon():
+            if not (self.is_fp4_expert and _is_hip and _use_aiter):
+                raise NotImplementedError(
+                    "DeepSeek-V4 FP4 with --moe-runner-backend gluon requires "
+                    "ROCm and AITER for the native hash-routed prefix."
+                )
+            moe_runner_backend = MoeRunnerBackend.AITER
+
         if moe_runner_backend.is_auto():
             if self.is_deepgemm_moe_runner_backend_enabled():
                 moe_runner_backend = MoeRunnerBackend.DEEP_GEMM

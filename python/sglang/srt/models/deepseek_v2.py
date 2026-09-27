@@ -883,6 +883,13 @@ class DeepseekV2MoE(nn.Module):
         # forward (weights and runner are final by then). None = undecided.
         self._moe_quant_once: Optional[bool] = None
 
+        if is_deepseek_v4 and get_moe_runner_backend().is_gluon() and not self.is_hash:
+            from sglang.srt.layers.moe.deepseek_v4_pro_gluon import (
+                DeepseekV4ProGluonMoeBackend,
+            )
+
+            self.bind_gluon_moe_backend(DeepseekV4ProGluonMoeBackend())
+
     def get_moe_weights(self):
         # EPLB only rebalances physical routed experts. Fused shared expert
         # slots live after each rank's routed slots and must stay stable.
@@ -1299,7 +1306,10 @@ class DeepseekV2MoE(nn.Module):
         skip_shared_experts: bool = False,
         num_token_non_padded: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if get_moe_runner_backend().is_gluon():
+        use_native_hash_moe = (
+            get_moe_runner_backend().is_gluon() and self.is_deepseek_v4 and self.is_hash
+        )
+        if get_moe_runner_backend().is_gluon() and not use_native_hash_moe:
             if self._gluon_moe_backend is None:
                 raise RuntimeError(
                     "--moe-runner-backend gluon was selected, but no Gluon "

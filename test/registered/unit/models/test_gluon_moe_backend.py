@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -31,6 +33,7 @@ def _moe_shell() -> DeepseekV2MoE:
     torch.nn.Module.__init__(moe)
     moe._gluon_moe_backend = None
     moe.is_deepseek_v4 = False
+    moe.is_hash = False
     moe.tp_size = 8
     moe.layer_id = 7
     moe.experts = torch.nn.Identity()
@@ -99,7 +102,7 @@ def test_gluon_backend_rejects_fp8_quant_method(monkeypatch):
 
     monkeypatch.setattr(fused_moe_layer, "get_moe_runner_backend", lambda: _Gluon())
 
-    with pytest.raises(ValueError, match="only serialized Quark W4A4 MXFP4"):
+    with pytest.raises(ValueError, match="only serialized Quark W4A4"):
         _validate_gluon_quant_method(object(), object())
 
 
@@ -158,3 +161,90 @@ def test_gluon_backend_owns_quark_mxfp4_weight_layout(monkeypatch):
     assert scheme.runner is None
     assert not scheme._owns_moe_runner
     assert scheme._owns_moe_weight_layout
+
+
+def test_gluon_backend_accepts_deepseek_v4_serialized_fp4(monkeypatch):
+    from sglang.srt.layers.moe.fused_moe_triton import layer as fused_moe_layer
+    from sglang.srt.layers.quantization.fp8 import Fp8MoEMethod
+
+    monkeypatch.setattr(fused_moe_layer, "get_moe_runner_backend", lambda: _Gluon())
+    quant_method = object.__new__(Fp8MoEMethod)
+    quant_method.is_fp4_expert = True
+    quant_method.quant_config = SimpleNamespace(is_dsv4_fp4_experts=True)
+
+    _validate_gluon_quant_method(object(), quant_method)
+
+
+def _deepseek_v4_pro_backend_shell(monkeypatch):
+    from sglang.srt import utils
+    from sglang.srt.layers.moe.deepseek_v4_pro_gluon import (
+        DeepseekV4ProGluonMoeBackend,
+    )
+    from sglang.srt.layers.quantization.fp8 import Fp8MoEMethod
+
+    monkeypatch.setattr(utils, "is_gfx95_supported", lambda: True)
+
+    quant_method = object.__new__(Fp8MoEMethod)
+    quant_method.is_fp4_expert = True
+    quant_method.quant_config = SimpleNamespace(
+        is_dsv4_fp4_experts=True,
+        is_checkpoint_fp8_serialized=True,
+        scale_fmt="ue8m0",
+        weight_block_size=[128, 128],
+    )
+    experts = SimpleNamespace(quant_method=quant_method)
+    config = SimpleNamespace(
+        model_type="deepseek_v4",
+        hidden_size=7168,
+        n_routed_experts=384,
+        num_experts_per_tok=6,
+        moe_intermediate_size=3072,
+        num_hidden_layers=61,
+        num_hash_layers=3,
+        n_shared_experts=1,
+        scoring_func="sqrtsoftplus",
+        norm_topk_prob=True,
+        swiglu_limit=10.0,
+    )
+    layer = SimpleNamespace(
+        config=config,
+        layer_id=3,
+        tp_size=8,
+        moe_ep_size=1,
+        is_hash=False,
+        gate=SimpleNamespace(e_score_correction_bias=object()),
+        _enable_a2a_moe=False,
+        alt_stream=None,
+        num_fused_shared_experts=0,
+        _fuse_shared_experts_inside_sbo=False,
+        _shared_expert_tp1=False,
+        shared_experts=object(),
+        routed_scaling_factor=2.5,
+    )
+    backend = DeepseekV4ProGluonMoeBackend()
+    return backend, layer, experts
+
+
+def test_deepseek_v4_pro_backend_binds_exact_contract(monkeypatch):
+    backend, layer, experts = _deepseek_v4_pro_backend_shell(monkeypatch)
+
+    backend.bind(layer, experts)
+
+    assert backend.layer is layer
+    assert backend.experts is experts
+
+
+def test_deepseek_v4_pro_backend_rejects_other_variants(monkeypatch):
+    backend, layer, experts = _deepseek_v4_pro_backend_shell(monkeypatch)
+    layer.config.hidden_size = 5120
+
+    with pytest.raises(RuntimeError, match="hidden size 7168"):
+        backend.bind(layer, experts)
+
+
+def test_deepseek_v4_pro_backend_rejects_unsupported_decode_shape(monkeypatch):
+    backend, layer, experts = _deepseek_v4_pro_backend_shell(monkeypatch)
+    backend.bind(layer, experts)
+
+    with pytest.raises(RuntimeError, match="supports only c=1 decode shapes"):
+        backend.forward(torch.empty((2, 7168), dtype=torch.bfloat16))

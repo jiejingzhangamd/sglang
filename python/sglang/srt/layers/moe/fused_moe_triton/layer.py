@@ -133,7 +133,7 @@ def _validate_gluon_quant_method(layer, quant_method) -> None:
         QuarkW4A4MXFp4MoE,
     )
 
-    serialized_quark = (
+    serialized_quark_mxfp4 = (
         isinstance(quant_method, QuarkFusedMoEMethod)
         and isinstance(getattr(layer, "scheme", None), QuarkW4A4MXFp4MoE)
         and layer.scheme.is_checkpoint_mxfp4_serialized
@@ -160,11 +160,17 @@ def _validate_gluon_quant_method(layer, quant_method) -> None:
         and tuple(layer.w2_weight.shape)
         == (256, 6144, layer.intermediate_size_per_partition)
     )
-    if not (serialized_quark or glm_nextn_bf16):
+    deepseek_v4_fp4 = (
+        isinstance(quant_method, Fp8MoEMethod)
+        and quant_method.is_fp4_expert
+        and getattr(quant_method.quant_config, "is_dsv4_fp4_experts", False)
+    )
+    if not (serialized_quark_mxfp4 or glm_nextn_bf16 or deepseek_v4_fp4):
         raise ValueError(
-            "--moe-runner-backend gluon currently supports only serialized "
-            "Quark W4A4 MXFP4 target experts or the audited GLM NextN BF16 "
-            "draft-expert ABI; other formats and topologies are not supported."
+            "--moe-runner-backend gluon supports only serialized Quark W4A4 "
+            "MXFP4 target experts, the audited GLM NextN BF16 draft-expert "
+            "ABI, or DeepSeek-V4 serialized FP4 experts; other formats and "
+            "topologies are not supported."
         )
 
 
