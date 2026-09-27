@@ -282,11 +282,37 @@ shape family instead of falling back to the native MoE backend. The CPU test
 expands both profiles and verifies the recorded source digests and continuous
 coverage without importing GPU dependencies.
 
+#### Strict AgentX TP8/EP1 C=10 A/B
+
+The large-M fix was validated end to end with the GLM-5.2 FP4 AgentX workload
+on two MI355X nodes. Every arm used the same SGLang runtime commit, strict
+target and draft Gluon binding, MTP `3/4/1`, concurrency 10, a 32768-token
+prefill chunk, and a 900-second profiling window. The control used the prior
+kernel/profile pack; the candidate used the PR-head pack. The nodes ran
+opposite arm orders to control both host and second-arm effects.
+
+| Order | Control P90 ITV | PR-head P90 ITV | P90 ITV change | Control output tok/s | PR-head output tok/s | Output change |
+|:--|--:|--:|--:|--:|--:|--:|
+| Forward | 56.588 | 81.772 | +44.51% | 365.255 | 495.931 | +35.78% |
+| Reverse | 52.439 | 85.361 | +62.78% | 355.119 | 458.535 | +29.12% |
+| Node/order-balanced geometric mean | 54.474 | 83.547 | **+53.37%** | 360.151 | 476.867 | **+32.41%** |
+
+The paired P90 ITV improvement across the two orders was **+51.02%**, with a
+request-bootstrap 95% confidence interval of **+36.44% to +69.21%** over 1,156
+matched requests. Total throughput improved by 6.25%. All four profiling arms
+completed with zero request errors, zero native MoE fallbacks, zero skipped
+Gluon dispatches, and eight target plus eight draft specialization reports.
+MTP acceptance rate (0.865-0.867) and GPU cache hit rate (about 96.3%) were
+effectively unchanged.
+
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
 the `fused_moe` entry point expected by the GLM-5.2 integration; server-side
-weight packing remains outside this benchmark bundle. The current integration
-supports only serialized Quark W4A4 MXFP4 MoE weights; FP8, BF16, and online
-MXFP4 conversion are rejected explicitly. Select the strict backend with
+weight packing remains outside this benchmark bundle. The target path accepts
+serialized Quark W4A4 MXFP4 MoE weights. The audited GLM NextN draft path also
+accepts its exact BF16 expert ABI and lets the bound GLM backend convert those
+weights to the same packed MXFP4 layout. FP8 experts, other BF16 topologies,
+and arbitrary online MXFP4 conversion are rejected explicitly. Select the
+strict backend with
 `--moe-runner-backend gluon`; an out-of-tree implementation subclasses
 `GluonMoeBackend` and binds through `DeepseekV2MoE.bind_gluon_moe_backend()`.
 The backend returns the rank-local routed-plus-shared output, while SGLang
@@ -302,7 +328,8 @@ checkpoint: its routed and shared experts retain the GLM-5.2 ABI (hidden size
 expert, and identical packed-weight/scale tensor metadata). Integrations must
 select a GLM-5.3 MoE-only profile so unrelated GLM-5.2 attention kernels are
 not installed. The GLM-5.3 checkpoint may retain its native FP8 attention, but
-FP8 or BF16 expert weights remain unsupported by this MoE bundle.
+FP8 expert weights and BF16 expert layouts other than the exact GLM NextN draft
+ABI remain unsupported by this MoE bundle.
 
 Other MoE families are not shape-compatible with the GLM snapshot. Qwen3-Next,
 Kimi-Linear, and Mixtral still require model-specific kernels, profiles, weight
