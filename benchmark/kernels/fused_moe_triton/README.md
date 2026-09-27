@@ -264,7 +264,7 @@ from kernel names.
 
 `glm52_triton_gluon_tp4/` and `glm52_triton_gluon_tp8/` contain the consolidated
 gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 42 target and
-MTP/draft dispatch entries backed by four source files. The TP8 profile has 57
+MTP/draft dispatch entries backed by four source files. The TP8 profile has 64
 entries backed by eight source files. Relative to the per-shape snapshot, TP4
 uses 4 instead of 20 source files and 2,086 instead of 10,576 kernel lines
 (-80.3%). TP8 uses 8 instead of 18 source files and 3,772 instead of 7,966
@@ -275,9 +275,12 @@ or `gl.constexpr` values so Triton specializes them at compile time. The compact
 schema-v3 profiles record common source, SHA-256, and semantics once per shape
 family. Use `profile_schema.load_profile()` (or run `profile_schema.py` as a
 CLI) to expand them into the flat `specializations` rows accepted by existing
-schema-v2 consumers. TP8 includes every active-batch product through batch 10
-for both 3/4/1 and 5/6/1 MTP configurations. The CPU test expands both profiles
-and verifies the recorded source digests without importing GPU dependencies.
+schema-v2 consumers. TP8 continuously covers every active batch from 1 through
+32768 in both target and MTP/draft modes. Exact tuned shapes take precedence;
+the remaining shapes dispatch to the corresponding compile-time-specialized
+shape family instead of falling back to the native MoE backend. The CPU test
+expands both profiles and verifies the recorded source digests and continuous
+coverage without importing GPU dependencies.
 
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
 the `fused_moe` entry point expected by the GLM-5.2 integration; server-side

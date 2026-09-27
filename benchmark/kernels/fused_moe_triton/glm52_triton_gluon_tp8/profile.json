@@ -11,7 +11,8 @@
         ["fused_moe_tp8_m8", [8, 0, 0]],
         ["fused_moe_tp8_m1", [1, 0, 0]],
         ["fused_moe_tp8_m4", [4, 0, 0]],
-        ["fused_moe_tp8_m16", [16, 0, 0]]
+        ["fused_moe_tp8_m16", [16, 0, 0]],
+        ["fused_moe_tp8_m1_16", [1, 0, 0], {"0": [1, 16]}, {"contract": {}}]
       ]
     },
     {
@@ -20,14 +21,16 @@
       "cases": [
         ["fused_moe_tp8_m64", [64, 0, 0]],
         ["fused_moe_tp8_m32", [32, 0, 0]],
-        ["fused_moe_tp8_m128", [128, 0, 0]]
+        ["fused_moe_tp8_m128", [128, 0, 0]],
+        ["fused_moe_tp8_m17_255", [17, 0, 0], {"0": [17, 255]}, {"contract": {}}]
       ]
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m256.py",
       "source_sha256": "972d6aeaf8c03d9de4ed02250c8163af3cde8d089e9e151e9b264c6dd3edb613",
       "cases": [
-        ["fused_moe_tp8_m256", [256, 0, 0]]
+        ["fused_moe_tp8_m256", [256, 0, 0]],
+        ["fused_moe_tp8_m256_1023", [256, 0, 0], {"0": [256, 1023]}, {"contract": {}}]
       ]
     },
     {
@@ -44,8 +47,10 @@
         ["fused_moe_tp8_m4193_4193", [12288, 0, 0], {"0": [12288, 12288]}],
         ["fused_moe_tp8_m4194_6143", [12289, 0, 0], {"0": [12289, 16383]}],
         ["fused_moe_tp8_m4193_4193", [16384, 0, 0], {"0": [16384, 16384]}],
+        ["fused_moe_tp8_m16769_32768", [16769, 0, 0], {"0": [16769, 32768]}, {"contract": {}}],
         ["fused_moe_tp8_m4193_16384_mtp", [4193, 1, 0], {"0": [4193, 16384]}],
-        ["fused_moe_tp8_m16385_16768", [16385, 1, 0], {"0": [16385, 16768]}, {"contract": {}}]
+        ["fused_moe_tp8_m16385_16768", [16385, 1, 0], {"0": [16385, 16768]}, {"contract": {}}],
+        ["fused_moe_tp8_m16769_32768_mtp", [16769, 1, 0], {"0": [16769, 32768]}, {"contract": {}}]
       ]
     },
     {
@@ -73,7 +78,8 @@
         ["fused_moe_tp8_m8_mtp", [8, 1, 0]],
         ["fused_moe_tp8_m16_mtp", [16, 1, 0]],
         ["fused_moe_tp8_m6_mtp", [6, 1, 0]],
-        ["fused_moe_tp8_m12_mtp", [12, 1, 0]]
+        ["fused_moe_tp8_m12_mtp", [12, 1, 0]],
+        ["fused_moe_tp8_m1_17_mtp", [1, 1, 0], {"0": [1, 17]}, {"contract": {}}]
       ]
     },
     {
@@ -98,7 +104,8 @@
         ["fused_moe_tp8_m192_mtp", [192, 1, 0]],
         ["fused_moe_tp8_m256_mtp", [256, 1, 0]],
         ["fused_moe_tp8_m384_mtp", [384, 1, 0]],
-        ["fused_moe_tp8_m768_mtp", [768, 1, 0]]
+        ["fused_moe_tp8_m768_mtp", [768, 1, 0]],
+        ["fused_moe_tp8_m18_1023_mtp", [18, 1, 0], {"0": [18, 1023]}, {"contract": {}}]
       ]
     },
     {

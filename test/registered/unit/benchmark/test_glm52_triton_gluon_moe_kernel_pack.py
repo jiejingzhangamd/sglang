@@ -122,7 +122,7 @@ def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
 
 def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
     _assert_hash_verified_pack(TP4_PACK, rows=42, sources=4)
-    _assert_hash_verified_pack(TP8_PACK, rows=57, sources=8)
+    _assert_hash_verified_pack(TP8_PACK, rows=64, sources=8)
 
 
 def test_related_shapes_share_compile_time_specialized_sources() -> None:
@@ -180,6 +180,14 @@ def test_tp8_mtp_product_shapes_resolve_to_large_mtp_source() -> None:
         for draft_width in (4, 6):
             signature = (batch_size * draft_width, 1, 0)
             assert _resolve_source(profile, signature) == expected_source
+
+
+def test_tp8_all_active_batches_resolve_without_native_fallback() -> None:
+    profile = _load_profile(TP8_PACK)
+
+    for mode in (0, 1):
+        for active_batch in range(1, 32769):
+            _resolve_source(profile, (active_batch, mode, 0))
 
 
 def test_tp4_related_shapes_share_compile_time_specialized_sources() -> None:
