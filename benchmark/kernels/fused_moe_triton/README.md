@@ -305,6 +305,46 @@ Gluon dispatches, and eight target plus eight draft specialization reports.
 MTP acceptance rate (0.865-0.867) and GPU cache hit rate (about 96.3%) were
 effectively unchanged.
 
+#### Strict AgentX TP8/EP1 C=1 A/B
+
+The same two-node, opposite-order procedure was repeated at concurrency 1. At
+this low concurrency the large-prefill interference fixed by the PR is rare, so
+P90 ITV was statistically neutral while output throughput improved.
+
+| Order | Control P90 ITV | PR-head P90 ITV | P90 ITV change | Control output tok/s | PR-head output tok/s | Output change |
+|:--|--:|--:|--:|--:|--:|--:|
+| Forward | 322.768 | 326.454 | +1.14% | 69.774 | 84.165 | +20.63% |
+| Reverse | 325.197 | 326.602 | +0.43% | 72.862 | 78.075 | +7.15% |
+| Node/order-balanced geometric mean | 323.980 | 326.528 | **+0.79%** | 71.301 | 81.063 | **+13.69%** |
+
+The paired P90 ITV change was **+0.80%**, with a request-bootstrap 95%
+confidence interval of **-1.64% to +3.84%** over 209 matched requests. Total
+throughput changed by -1.35%. Every profiling arm had zero request errors; one
+control warmup request failed before measurement. The PR-head arms had zero
+native MoE fallbacks, zero skipped Gluon dispatches, zero tracebacks, and eight
+target plus eight draft specialization reports.
+
+#### Prefill chunk-size sweep
+
+With the fixed PR-head kernels held constant, a second two-node,
+opposite-order C=10 A/B compared the 32768-token chunk against 8192. Reducing
+the chunk did not improve P90 ITV, so the validated configuration retains
+32768.
+
+| Order | 32768 P90 ITV | 8192 P90 ITV | P90 ITV change | 32768 output tok/s | 8192 output tok/s | Output change |
+|:--|--:|--:|--:|--:|--:|--:|
+| Forward | 85.855 | 80.403 | -6.35% | 488.602 | 511.220 | +4.63% |
+| Reverse | 91.456 | 85.162 | -6.88% | 439.407 | 453.591 | +3.23% |
+| Node/order-balanced geometric mean | 88.611 | 82.748 | **-6.62%** | 463.352 | 481.544 | **+3.93%** |
+
+The paired P90 ITV change was **-6.53%**, with a request-bootstrap 95%
+confidence interval of **-15.57% to +2.58%** over 1,184 matched requests;
+total throughput changed by -0.31%. All four profiling arms completed with
+zero request errors, zero native MoE fallbacks, zero skipped Gluon dispatches,
+and eight target plus eight draft reports. One 8192-token arm logged a timed-out
+health probe during the one-time AITER attention build before warmup; it was
+not a benchmark request or a profiling failure.
+
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
 the `fused_moe` entry point expected by the GLM-5.2 integration; server-side
 weight packing remains outside this benchmark bundle. The target path accepts
