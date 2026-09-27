@@ -901,7 +901,12 @@ class QuarkW4A4MXFp4MoE(QuarkMoEScheme):
         if moe_runner_backend.is_auto() and get_moe_a2a_backend().supports_aiter():
             moe_runner_backend = MoeRunnerBackend.AITER
 
-        if moe_runner_backend.is_aiter():
+        if moe_runner_backend.is_gluon():
+            # Gluon consumes the serialized MXFP4 weights through the
+            # whole-layer DeepseekV2MoE backend before this scheme's ordinary
+            # routed-expert apply path.
+            self.runner = None
+        elif moe_runner_backend.is_aiter():
             self.runner = MoeRunner(moe_runner_backend, moe_runner_config)
             self._owns_moe_runner = True
         else:

@@ -124,6 +124,27 @@ def _fuses_routed_scaling_factor_in_topk(quant_method) -> bool:
     )
 
 
+def _validate_gluon_quant_method(layer, quant_method) -> None:
+    if not get_moe_runner_backend().is_gluon():
+        return
+
+    from sglang.srt.layers.quantization.quark.schemes.quark_w4a4_mxfp4_moe import (
+        QuarkW4A4MXFp4MoE,
+    )
+    from sglang.srt.layers.quantization.quark.quark import QuarkFusedMoEMethod
+
+    if not (
+        isinstance(quant_method, QuarkFusedMoEMethod)
+        and isinstance(getattr(layer, "scheme", None), QuarkW4A4MXFp4MoE)
+        and layer.scheme.is_checkpoint_mxfp4_serialized
+    ):
+        raise ValueError(
+            "--moe-runner-backend gluon currently supports only serialized "
+            "Quark W4A4 MXFP4 MoE checkpoints; FP8, BF16, online-quantized "
+            "MXFP4, and other expert formats are not supported."
+        )
+
+
 def _copy_weight_view_before_h2d(loaded_weight: torch.Tensor) -> torch.Tensor:
     """Copy a CPU tensor view into independent contiguous storage."""
     if loaded_weight.device.type != "cpu":
@@ -533,6 +554,7 @@ class FusedMoE(torch.nn.Module):
             moe_intermediate_size=intermediate_size,
         )
 
+        _validate_gluon_quant_method(self, self.quant_method)
         self.quant_method.create_moe_runner(self, self.moe_runner_config)
         self.dispatcher = create_moe_dispatcher(
             self.moe_runner_config, quant_method=self.quant_method

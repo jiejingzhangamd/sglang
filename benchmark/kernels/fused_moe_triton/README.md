@@ -284,8 +284,10 @@ coverage without importing GPU dependencies.
 
 The kernels require an AMD gfx950 GPU and Triton 3.8 Gluon. Each source exports
 the `fused_moe` entry point expected by the GLM-5.2 integration; server-side
-weight packing remains outside this benchmark bundle. Select the strict backend
-with `--moe-runner-backend gluon`; an out-of-tree implementation subclasses
+weight packing remains outside this benchmark bundle. The current integration
+supports only serialized Quark W4A4 MXFP4 MoE weights; FP8, BF16, and online
+MXFP4 conversion are rejected explicitly. Select the strict backend with
+`--moe-runner-backend gluon`; an out-of-tree implementation subclasses
 `GluonMoeBackend` and binds through `DeepseekV2MoE.bind_gluon_moe_backend()`.
 The backend returns the rank-local routed-plus-shared output, while SGLang
 retains the native post-expert collective. A missing implementation, unsupported
