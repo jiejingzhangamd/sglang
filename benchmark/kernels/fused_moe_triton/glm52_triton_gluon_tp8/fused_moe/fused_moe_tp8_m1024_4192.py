@@ -111,7 +111,7 @@ def _prologue(X, W, L, Counts, XQ, M: gl.constexpr, H: gl.constexpr, SX: gl.cons
         _quantize_input(X, XQ, pid - ROUTER_CTAS, M, H, SX, NW, QG)
 
 @gluon.jit
-def _select_routes(L, Bias, Codes, Weights, Counts, M: gl.constexpr):
+def _select_routes(L, Bias, Codes, Weights, Counts, M: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -133,7 +133,7 @@ def _select_routes(L, Bias, Codes, Weights, Counts, M: gl.constexpr):
         score = gl.where(e == idx, -float('inf'), score)
     ticket = gl.atomic_add(Counts + m // 64 % 8 * 256 + selected_id, 1, e < 8, sem='relaxed')
     gl.store(Codes + m * 8 + e, selected_id * M + ticket, e < 8)
-    gl.store(Weights + m * 8 + e, selected_prob / total * 2.5, e < 8)
+    gl.store(Weights + m * 8 + e, selected_prob / total * SCALE, e < 8)
 
 @gluon.jit
 def _prepare(Codes, Counts, Sorted, Info, M: gl.constexpr, BM: gl.constexpr, CAP: gl.constexpr, SCHEDULED: gl.constexpr, CHUNKS: gl.constexpr):
@@ -394,7 +394,7 @@ def _shared_down(AQ, W, S, Sorted, Parts, Y, Weights, Codes, M: gl.constexpr, N:
     live = gl.minimum(BM, M - (block - CAP) * BM)
     _expert_tile(AQ, W, S, Sorted, AQ, Parts, Y, Weights, Codes, block, gl.program_id(1), 256, live, M, N, K, BM, 128, 256, CAP, False, 16, True, start)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     block_m = 64 if m <= 1536 else 128
@@ -424,7 +424,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
     quant_ctas = triton.cdiv(m * (h // 32), quant_groups)
     router_ctas = triton.cdiv(m, router_m) * (256 // router_n)
     _prologue[router_ctas + quant_ctas,](x, router, logits, counts, xq, m, h, x.stride(0), router_m, router_n, router_k, router_warps, quant_groups, num_warps=router_warps, enable_fp_fusion=False)
-    _select_routes[m,](logits, correction_bias, codes, weights, counts, m, num_warps=1, enable_fp_fusion=False)
+    _select_routes[m,](logits, correction_bias, codes, weights, counts, m, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     _prepare[chunks + 258,](codes, counts, sorted_routes, info, m, block_m, routed_capacity, scheduled, chunks, num_warps=1, enable_fp_fusion=False)
     _experts[scheduled * (2 * intermediate // 128),](xq, w13, w13_scale, sorted_routes, info, aq, parts, out, weights, codes, m, 2 * intermediate, h, block_m, 128, 256, routed_capacity, True, 2 * intermediate // 128, enable_fp_fusion=False)
     _experts[routed_capacity * (h // 128),](aq, w2, w2_scale, sorted_routes, info, aq, parts, out, weights, codes, m, h, intermediate, block_m, 128, 256, routed_capacity, False, h // 128, enable_fp_fusion=False)

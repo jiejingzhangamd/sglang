@@ -45,7 +45,7 @@ def _router_projection(X, W, Y, M: gl.constexpr, K: gl.constexpr, SX: gl.constex
     gl.store(Y + rm[:, None] * 256 + cn[None, :], acc, rm[:, None] < M)
 
 @gluon.jit
-def _router(Logits, Bias, Ids, Weights):
+def _router(Logits, Bias, Ids, Weights, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -66,7 +66,7 @@ def _router(Logits, Bias, Ids, Weights):
         total += prob
         available = available & (e != idx)
         score = gl.where(e == idx, -float('inf'), score)
-    gl.store(Weights + m * 8 + e, selected / total * 2.5, e < 8)
+    gl.store(Weights + m * 8 + e, selected / total * SCALE, e < 8)
     gl.store(Ids + m * 9 + 8, 256)
 
 @gluon.jit
@@ -581,7 +581,7 @@ class _Workspace:
         self.scale_codec = m >= 8192
         self.weight_minimum = empty((256, h // 256), torch.uint8) if self.scale_codec else None
 
-def _route_and_pack(x, router, correction_bias, work, w2_scale):
+def _route_and_pack(x, router, correction_bias, work, w2_scale, routed_scaling_factor):
     m, h = x.shape
     router_rows = 128 if 16383 <= m <= 16384 else 32 if m < 8192 else 64
     router_columns = 128 if m > 16384 else 64
@@ -590,7 +590,7 @@ def _route_and_pack(x, router, correction_bias, work, w2_scale):
         router_k = 256
     quantize_groups, quantize_values = (256, 32)
     _router_projection[triton.cdiv(m, router_rows), 256 // router_columns](x, router, work.logits, m, h, x.stride(0), router_rows, router_k, router_columns)
-    _router[m,](work.logits, correction_bias, work.ids, work.weights, num_warps=1)
+    _router[m,](work.logits, correction_bias, work.ids, work.weights, routed_scaling_factor, num_warps=1)
     _chunk_counts[max(work.chunks, triton.cdiv(work.capacity, 1024)),](work.ids, work.partial_counts, work.sorted_routes, work.experts, work.down_experts, work.routes, work.chunks, work.capacity, work.block_m, work.down_tiles)
     _chunk_prefix[257,](work.partial_counts, work.partial_counts, work.counts, work.chunks, triton.next_power_of_2(work.chunks))
     _build_expert_blocks[257,](work.counts, work.offsets, work.experts, work.down_experts, work.block_m, triton.next_power_of_2(triton.cdiv(m, work.block_m)), triton.next_power_of_2(triton.cdiv(m, 64)))
@@ -610,11 +610,11 @@ def _finish(w2, w2_scale, work):
     reduce_rows, reduce_columns = (32, 256)
     _shared_reduce[triton.cdiv(m, reduce_rows) * (h // reduce_columns),](work.aq, work.aqs, w2, w2_scale, work.offsets, work.parts, work.codes, work.headers, work.weights, work.inverse, work.output, m, h, work.intermediate, reduce_rows, reduce_columns, work.payload_pitch, 8, enable_fp_fusion=False)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     intermediate = w13.shape[1] // 2
     assert w2.shape == (257, x.shape[1], intermediate // 2)
     work = _Workspace(x, intermediate)
-    _route_and_pack(x, router, correction_bias, work, w2_scale)
+    _route_and_pack(x, router, correction_bias, work, w2_scale, routed_scaling_factor)
     _project_experts(w13, w13_scale, w2, w2_scale, work)
     _finish(w2, w2_scale, work)
     return work.output

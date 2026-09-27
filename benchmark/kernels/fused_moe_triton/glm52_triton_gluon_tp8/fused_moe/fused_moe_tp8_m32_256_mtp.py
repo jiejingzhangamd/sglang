@@ -81,7 +81,7 @@ def _router_and_quantize(X, W, L, Q, QS, Counts, M: gl.constexpr, H: gl.constexp
         _quantize_input(X, Q, QS, M, H, SX, GROUPS, ROUTER_CTAS)
 
 @gluon.jit
-def _select_routes(L, Bias, Weights, Counts, Sorted, M: gl.constexpr, SPLITS: gl.constexpr, PAD: gl.constexpr):
+def _select_routes(L, Bias, Weights, Counts, Sorted, M: gl.constexpr, SPLITS: gl.constexpr, PAD: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -110,7 +110,7 @@ def _select_routes(L, Bias, Weights, Counts, Sorted, M: gl.constexpr, SPLITS: gl
     ticket = gl.atomic_add(Counts + selected_id, 1, e < 8, sem='relaxed')
     arena = selected_id * PAD + ticket
     gl.store(Sorted + arena, m * 8 + e, e < 8)
-    gl.store(Weights + m * 8 + e, selected_prob / total * 2.5, e < 8)
+    gl.store(Weights + m * 8 + e, selected_prob / total * SCALE, e < 8)
 
 @gluon.jit
 def _weight_offset(n, k, K: gl.constexpr):
@@ -300,7 +300,7 @@ def _reduce_parts(P, Y, Weights, M: gl.constexpr, H: gl.constexpr):
     value += gl.load(Y + m * H + h).to(gl.float32)
     gl.store(Y + m * H + h, value)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     pad = triton.cdiv(m, 16) * 16
@@ -328,7 +328,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
     router_ctas = triton.cdiv(m, 16) * 16 * router_splits
     quant_ctas = triton.cdiv(m * (h // 32), 16)
     _router_and_quantize[router_ctas + quant_ctas,](x, router, logits, xq, xs, counts, m, h, x.stride(0), 16, 16, router_k, 16, router_splits, num_warps=1, enable_fp_fusion=False)
-    _select_routes[m,](logits, correction_bias, weights, counts, sorted_routes, m, router_splits, pad, num_warps=1, enable_fp_fusion=False)
+    _select_routes[m,](logits, correction_bias, weights, counts, sorted_routes, m, router_splits, pad, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     _expert_tiles[jobs_count * (2 * intermediate // up_n),](xq, xs, w13, w13_scale, sorted_routes, jobs, counts, aq, aqs, parts, out, m, 2 * intermediate, h, pad, up_group, True, up_n, up_k, num_warps=up_warps, enable_fp_fusion=False)
     _expert_tiles[jobs_count * (h // down_n),](aq, aqs, w2, w2_scale, sorted_routes, jobs, counts, aq, aqs, parts, out, m, h, intermediate, pad, down_group, False, down_n, down_k, num_warps=down_warps)
     _reduce_parts[m, h // 128](parts, out, weights, m, h, num_warps=1, enable_fp_fusion=False)

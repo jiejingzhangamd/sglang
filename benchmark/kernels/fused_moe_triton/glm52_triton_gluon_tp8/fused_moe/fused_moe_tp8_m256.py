@@ -74,7 +74,7 @@ def _router_projection(X, W, L, Counts, M: gl.constexpr, H: gl.constexpr, SX: gl
     _router_linear(X, W, L, M, H, SX, BM, BN, BK, pid % ROUTER_ROWS, pid % ROUTER_BASE // ROUTER_ROWS, SPLITS, pid // ROUTER_BASE)
 
 @gluon.jit
-def _select_routes(L, Bias, Weights, Counts, Sorted, M: gl.constexpr, SPLITS: gl.constexpr, PAD: gl.constexpr, COUNT_STRIDE: gl.constexpr):
+def _select_routes(L, Bias, Weights, Counts, Sorted, M: gl.constexpr, SPLITS: gl.constexpr, PAD: gl.constexpr, COUNT_STRIDE: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -109,12 +109,12 @@ def _select_routes(L, Bias, Weights, Counts, Sorted, M: gl.constexpr, SPLITS: gl
     ticket = gl.atomic_add(Counts + selected_id * COUNT_STRIDE, 1, e < 8, sem='relaxed')
     arena = selected_id * PAD + ticket
     gl.store(Sorted + arena, m * 8 + e, e < 8)
-    gl.store(Weights + m * 8 + e, selected_prob / total * 2.5, e < 8)
+    gl.store(Weights + m * 8 + e, selected_prob / total * SCALE, e < 8)
 
 @gluon.jit
-def _select_and_quantize(X, Q, QS, L, Bias, Weights, Counts, Sorted, M: gl.constexpr, H: gl.constexpr, SX: gl.constexpr, SPLITS: gl.constexpr, PAD: gl.constexpr, COUNT_STRIDE: gl.constexpr, GROUPS: gl.constexpr):
+def _select_and_quantize(X, Q, QS, L, Bias, Weights, Counts, Sorted, M: gl.constexpr, H: gl.constexpr, SX: gl.constexpr, SPLITS: gl.constexpr, PAD: gl.constexpr, COUNT_STRIDE: gl.constexpr, GROUPS: gl.constexpr, SCALE: gl.constexpr):
     if gl.program_id(0) < M:
-        _select_routes(L, Bias, Weights, Counts, Sorted, M, SPLITS, PAD, COUNT_STRIDE)
+        _select_routes(L, Bias, Weights, Counts, Sorted, M, SPLITS, PAD, COUNT_STRIDE, SCALE)
     else:
         _quantize_input(X, Q, QS, M, H, SX, GROUPS, M)
 
@@ -349,7 +349,7 @@ def _reduce_parts(P, Y, Weights, M: gl.constexpr, H: gl.constexpr, BLOCK: gl.con
     value += gl.load(Y + m * H + h).to(gl.float32)
     gl.store(Y + m * H + h, value)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     small_batch = m <= 128
@@ -391,7 +391,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
     router_ctas = triton.cdiv(m, router_mn) * (256 // router_mn) * router_splits
     quant_ctas = triton.cdiv(m * (h // 32), quant_groups)
     _router_projection[router_ctas,](x, router, logits, counts, m, h, x.stride(0), router_mn, router_mn, router_k, router_splits, count_stride, num_warps=1, enable_fp_fusion=False)
-    _select_and_quantize[m + quant_ctas,](x, xq, xs, logits, correction_bias, weights, counts, sorted_routes, m, h, x.stride(0), router_splits, pad, count_stride, quant_groups, num_warps=1, enable_fp_fusion=False, llvm_fn_attrs=selector_schedule)
+    _select_and_quantize[m + quant_ctas,](x, xq, xs, logits, correction_bias, weights, counts, sorted_routes, m, h, x.stride(0), router_splits, pad, count_stride, quant_groups, routed_scaling_factor, num_warps=1, enable_fp_fusion=False, llvm_fn_attrs=selector_schedule)
     _expert_tiles[jobs_count * (2 * intermediate // up_n),](xq, xs, w13, w13_scale, sorted_routes, jobs, counts, aq, aqs, parts, out, m, 2 * intermediate, h, pad, 1, True, up_n, up_k, tile_rows, native, activation_rows, count_stride, num_warps=up_warps, enable_fp_fusion=False)
     _expert_tiles[jobs_count * (h // down_n),](aq, aqs, w2, w2_scale, sorted_routes, jobs, counts, aq, aqs, parts, out, m, h, intermediate, pad, down_group, False, down_n, 256, tile_rows, native, activation_rows, count_stride, num_warps=down_warps)
     reduce_block = 512 if small_batch else 128

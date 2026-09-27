@@ -62,7 +62,7 @@ def _router_projection_tile(X, W, Y, row_tile, col_tile, M: gl.constexpr, K: gl.
     gl.store(Y + rm[:, None] * 256 + cn[None, :], acc, True if M % BM == 0 else rm[:, None] < M)
 
 @gluon.jit
-def _router(Logits, Bias, Ids, Weights):
+def _router(Logits, Bias, Ids, Weights, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -83,7 +83,7 @@ def _router(Logits, Bias, Ids, Weights):
         total += prob
         available = available & (e != idx)
         score = gl.where(e == idx, -float('inf'), score)
-    gl.store(Weights + m * 8 + e, selected / total * 2.5, e < 8)
+    gl.store(Weights + m * 8 + e, selected / total * SCALE, e < 8)
 
 @gluon.jit
 def _chunk_counts(Ids, Counts, Sorted, Experts, ROUTES: gl.constexpr, CHUNKS: gl.constexpr, CAPACITY: gl.constexpr, BM: gl.constexpr):
@@ -536,7 +536,7 @@ class _Workspace:
         self.headers = empty((8 * m, h // 256), torch.uint8)
         self.output = empty((m, h))
 
-def _route_inputs(x, router, correction_bias, work, block_m):
+def _route_inputs(x, router, correction_bias, work, block_m, routed_scaling_factor):
     m, h = x.shape
     capacity = work.sorted_routes.numel()
     chunks = work.partial_counts.shape[1]
@@ -548,7 +548,7 @@ def _route_inputs(x, router, correction_bias, work, block_m):
     projection_tiles = triton.cdiv(m, router_rows) * (256 // router_columns)
     quantize_tiles = triton.cdiv(m * h // 32, quantize_groups)
     _router_project_quantize[projection_tiles + quantize_tiles,](x, router, work.logits, work.xq, work.xs, m, h, x.stride(0), router_rows, router_k, router_columns, quantize_groups, quantize_values)
-    _router[m,](work.logits, correction_bias, work.ids, work.weights, num_warps=1)
+    _router[m,](work.logits, correction_bias, work.ids, work.weights, routed_scaling_factor, num_warps=1)
     _chunk_counts[max(chunks, triton.cdiv(capacity, 1024)),](work.ids, work.partial_counts, work.sorted_routes, work.experts, routes, chunks, capacity, block_m)
     _chunk_prefix[257,](work.partial_counts, work.partial_counts, work.counts, chunks, triton.next_power_of_2(chunks), m)
     _build_expert_blocks[257,](work.counts, work.offsets, work.experts, block_m, triton.next_power_of_2(triton.cdiv(m, block_m)))
@@ -561,13 +561,13 @@ def _finish(work, w2, w2_scale, m, h, intermediate):
     reduce_columns, reduce_rows = (256, 32)
     _shared_reduce[triton.cdiv(m, reduce_rows) * (h // reduce_columns),](work.aq, work.aqs, w2, w2_scale, work.offsets, work.parts, work.codes, work.headers, work.weights, work.inverse, work.output, m, h, intermediate, reduce_rows, reduce_columns, 8, 8 if m >= 6144 else 1, enable_fp_fusion=False)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     block_m = 128
     capacity = _padded_capacity(9 * m, 257, block_m)
     work = _Workspace(x, intermediate, capacity, block_m, triton.cdiv(8 * m, 256))
-    _route_inputs(x, router, correction_bias, work, block_m)
+    _route_inputs(x, router, correction_bias, work, block_m, routed_scaling_factor)
     up_columns, up_k = (256, 128)
     _expert_projection[capacity // block_m * (2 * intermediate // up_columns),](work.xq, work.xs, w13, w13_scale, work.sorted_routes, work.experts, work.aq, work.aqs, work.codes, work.headers, 2 * intermediate, h, True, m, block_m, up_columns, up_k, 8, enable_fp_fusion=False)
     routed_capacity = _padded_capacity(8 * m, 256, block_m)

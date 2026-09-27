@@ -81,7 +81,7 @@ def _front_end(X, W, L, Q, QS, Counts, M, H: gl.constexpr, SX: gl.constexpr, BM:
         _quantize_input(X, Q, QS, M, H, SX, GROUPS, router_ctas, WARPS)
 
 @gluon.jit
-def _select_routes(L, Bias, Ids, Weights, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl.constexpr):
+def _select_routes(L, Bias, Ids, Weights, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -103,7 +103,7 @@ def _select_routes(L, Bias, Ids, Weights, Counts, SHARDS: gl.constexpr, TICKET_S
         score = gl.where(e == idx, -float('inf'), score)
     ticket = gl.atomic_add(Counts + m // 64 % SHARDS * 256 + selected_id, 1, e < 8, sem='relaxed')
     gl.store(Ids + m * 8 + e, selected_id * TICKET_STRIDE + ticket, e < 8)
-    gl.store(Weights + m * 8 + e, selected_prob / total * 2.5, e < 8)
+    gl.store(Weights + m * 8 + e, selected_prob / total * SCALE, e < 8)
 
 @gluon.jit(do_not_specialize=['M'])
 def _write_height_descriptors(UpInfo, e, experts, counts, offset, count, M, BM: gl.constexpr):
@@ -397,7 +397,7 @@ def _reduce_parts(P, Y, Records, M, H: gl.constexpr, BLOCK: gl.constexpr, WARPS:
     value += gl.load(Y + m * H + h).to(gl.float32)
     gl.store(Y + m * H + h, value)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     assert 1024 <= m <= 4192
     intermediate = w13.shape[1] // 2
@@ -437,7 +437,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
     quant_ctas = triton.cdiv(m * (h // 32), quant_groups)
     router_ctas = triton.cdiv(m, router_m) * (256 // router_n)
     _front_end[router_ctas + quant_ctas,](x, router, logits, xq, xs, partial_counts, m, h, x.stride(0), router_m, router_n, router_k, router_warps, quant_groups, shards, ROW_MAJOR=m > 4096, num_warps=router_warps, enable_fp_fusion=False)
-    _select_routes[m,](logits, correction_bias, records, weights, partial_counts, shards, ticket_stride, num_warps=1, enable_fp_fusion=False)
+    _select_routes[m,](logits, correction_bias, records, weights, partial_counts, shards, ticket_stride, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     _prepare_routes[chunks + 258,](records, weights, partial_counts, sorted_routes, up_info, jobs, m, chunks, block_m, routed_blocks, scheduled_blocks, down_blocks, wide_down, shards, ticket_stride, num_warps=1, enable_fp_fusion=False)
     up_bn = 128 if 1536 < m <= 2560 else 256
     up_early_data = m <= 1536

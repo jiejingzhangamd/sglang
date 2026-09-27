@@ -313,4 +313,6 @@ generic Gluon backend boundary only after receiving model-specific kernels,
 profiles, weight preparation, and contract tests.
 Re-quantizing those experts as serialized Quark W4A4 MXFP4 is not sufficient:
 the GLM kernels still require hidden size 6144, MoE intermediate size 2048, 256
-routed experts, top-8 sigmoid routing with scale 2.5, and one shared expert.
+routed experts, top-8 normalized sigmoid routing, and one shared expert. The
+positive routed scaling factor is supplied by the model at runtime; model depth,
+the first MoE layer, and MoE layer frequency are not kernel ABI constraints.

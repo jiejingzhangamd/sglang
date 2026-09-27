@@ -87,7 +87,7 @@ def _router_linear(X, W, Y, Q, Groups, H: gl.constexpr, SX: gl.constexpr, M: gl.
         _store_input_quantized(Q, values, row, group, H, M, True)
 
 @gluon.jit
-def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GROUPED: gl.constexpr):
+def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GROUPED: gl.constexpr, SCALE: gl.constexpr):
     row = gl.program_id(0)
     layout: gl.constexpr = gl.BlockedLayout([4], [64], [1], [0])
     record_layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
@@ -126,7 +126,7 @@ def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GRO
     if GROUPED:
         membership = (r + 1).to(gl.uint64) << row * 4
         gl.amd.cdna4.buffer_atomic_or(Groups.to(gl.pointer_type(gl.int64)), selected_ids, membership.to(gl.int64, bitcast=True), r < 9, sem='relaxed')
-    gl.store(Weights + row * 9 + r, selected / total * 2.5, r < 8)
+    gl.store(Weights + row * 9 + r, selected / total * SCALE, r < 8)
     gl.store(Weights + row * 9 + 8, 1.0)
 
 @gluon.jit
@@ -229,9 +229,9 @@ def _expert_projection(X, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.cons
         gl.store(Y + offsets, acc, valid[:, None])
 
 @gluon.jit
-def _select_and_shared(Logits, Bias, Ids, Weights, Groups, X, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr):
+def _select_and_shared(Logits, Bias, Ids, Weights, Groups, X, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, SCALE: gl.constexpr):
     if gl.program_id(0) < M:
-        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, M >= 2)
+        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, M >= 2, SCALE)
     else:
         _expert_projection(X, W, Scales, Ids, Groups, GU, 2 * I, H, M, True, SPLITS, BN, SHARED_ONLY=True)
 
@@ -358,7 +358,7 @@ def _combine(P, Weights, Y, H: gl.constexpr, BLOCK: gl.constexpr, VEC: gl.conste
         value += part * gl.load(Weights + row * 9 + j)
     gl.store(Y + row * H + h, value)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch.Tensor:
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5) -> torch.Tensor:
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     routes = m * 9
@@ -385,9 +385,9 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch
     out = empty((m, h))
     _router_linear[16 * router_splits + m * (h // (32 * quant_groups)) + int(grouped),](x, router, logits, xq, groups, h, x.stride(0), m, router_splits, router_block, 16, grouped, quant_vector, quant_groups, num_warps=1)
     if stagger:
-        _select_and_shared[m + splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, num_warps=1)
+        _select_and_shared[m + splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, routed_scaling_factor, num_warps=1)
     else:
-        _select_routes[m,](logits, correction_bias, ids, weights, groups, router_splits, grouped, num_warps=1)
+        _select_routes[m,](logits, correction_bias, ids, weights, groups, router_splits, grouped, routed_scaling_factor, num_warps=1)
     if stagger:
         up_jobs = m * (intermediate // 64) + m * 8 * splits * (2 * intermediate // up_width)
         _up_and_shared_activation[up_jobs,](xq, w13, w13_scale, ids, groups, gu, aq, h, intermediate, m, splits, up_width, num_warps=1, enable_fp_fusion=False)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -123,6 +124,26 @@ def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
 def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
     _assert_hash_verified_pack(TP4_PACK, rows=42, sources=4)
     _assert_hash_verified_pack(TP8_PACK, rows=64, sources=8)
+
+
+def test_all_kernel_entrypoints_accept_runtime_routed_scaling() -> None:
+    sources = sorted(PACK_ROOT.glob("glm52_triton_gluon_tp[48]/fused_moe/*.py"))
+    assert len(sources) == 12
+
+    for source in sources:
+        text = source.read_text()
+        tree = ast.parse(text)
+        entrypoint = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "fused_moe"
+        )
+        names = [argument.arg for argument in entrypoint.args.args]
+        assert names[-1] == "routed_scaling_factor", source.name
+        assert isinstance(entrypoint.args.defaults[-1], ast.Constant), source.name
+        assert entrypoint.args.defaults[-1].value == 2.5, source.name
+        assert "selected / total * 2.5" not in text, source.name
+        assert "selected_prob / total * 2.5" not in text, source.name
 
 
 def test_related_shapes_share_compile_time_specialized_sources() -> None:

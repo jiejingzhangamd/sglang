@@ -129,7 +129,7 @@ def _next_expert(score, available, e):
     return idx
 
 @gluon.jit
-def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GROUPED: gl.constexpr):
+def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GROUPED: gl.constexpr, SCALE: gl.constexpr):
     row = gl.program_id(0)
     layout: gl.constexpr = gl.BlockedLayout([4], [64], [gl.num_warps()], [0])
     record_layout: gl.constexpr = gl.BlockedLayout([1], [64], [gl.num_warps()], [0])
@@ -153,7 +153,7 @@ def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GRO
     if GROUPED:
         membership = (r + 1).to(gl.uint64) << row * 4
         gl.amd.cdna4.buffer_atomic_or(Groups.to(gl.pointer_type(gl.int64)), selected_ids, membership.to(gl.int64, bitcast=True), r < 8, sem='relaxed')
-    gl.store(Weights + row * 9 + r, selected / total * 2.5, r < 8)
+    gl.store(Weights + row * 9 + r, selected / total * SCALE, r < 8)
     gl.store(Weights + row * 9 + 8, 1.0)
 
 @gluon.jit
@@ -306,16 +306,16 @@ def _expert_projection(X, XS, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.
         gl.store(Y + (output_row[:, None] * SPLITS + split) * N + on[None, :], acc, valid[:, None])
 
 @gluon.jit
-def _select_and_shared(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr):
+def _select_and_shared(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, SCALE: gl.constexpr):
     if gl.program_id(0) < M:
-        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, True)
+        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, True, SCALE)
     else:
         _expert_projection(X, XS, W, Scales, Ids, Groups, GU, 2 * I, H, M, True, SPLITS, BN, SHARED_ONLY=True)
 
 @gluon.jit
-def _select_and_up(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr=128, WEIGHT_CACHE: gl.constexpr='buffer'):
+def _select_and_up(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, SCALE: gl.constexpr, BK: gl.constexpr=128, WEIGHT_CACHE: gl.constexpr='buffer'):
     if gl.program_id(0) < M:
-        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, False)
+        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, False, SCALE)
     else:
         _expert_projection(X, XS, W, Scales, Ids, Groups, GU, 2 * I, H, M, True, SPLITS, BN, RECOMPUTE_ROUTE=True, Logits=Logits, Bias=Bias, ROUTER_SPLITS=ROUTER_SPLITS, BK=BK, WEIGHT_CACHE=WEIGHT_CACHE)
 
@@ -631,10 +631,10 @@ def _fused_up_body(X, XS, W, Scales, AQ, AQS, Logits, Bias, token, rank, tile, H
     gl.store(AQS + route * (I // 32) + g, scale)
 
 @gluon.jit
-def _select_fused_up(Logits, Bias, Ids, Weights, X, XS, W, Scales, AQ, AQS, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, ROUTER_SPLITS: gl.constexpr, NATIVE_QUANT: gl.constexpr, PAIR_ORDER: gl.constexpr):
+def _select_fused_up(Logits, Bias, Ids, Weights, X, XS, W, Scales, AQ, AQS, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, BN: gl.constexpr, WARPS: gl.constexpr, ROUTER_SPLITS: gl.constexpr, NATIVE_QUANT: gl.constexpr, PAIR_ORDER: gl.constexpr, SCALE: gl.constexpr):
     pid = gl.program_id(0)
     if pid < M:
-        _select_routes(Logits, Bias, Ids, Weights, None, ROUTER_SPLITS, False)
+        _select_routes(Logits, Bias, Ids, Weights, None, ROUTER_SPLITS, False, SCALE)
     else:
         work = pid - M
         tile = work % (I // BN)
@@ -734,7 +734,7 @@ def _stream_paired_down(X, XS, W, Scales, Ids, Weights, Y, N: gl.constexpr, K: g
     gl.store(Y + token * N + n[None, :], result0)
     gl.store(Y + (token + 1) * N + n[None, :], result1)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch.Tensor:
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5) -> torch.Tensor:
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     routes = m * 9
@@ -766,18 +766,18 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch
     out = empty((m, h))
     _router_linear[16 * router_splits + m * (h // (32 * quant_groups)) + int(grouped),](x, router, logits, xq, xs, groups, h, x.stride(0), m, router_splits, router_block, 16, grouped, quant_vector, quant_groups, NATIVE=m == 2, num_warps=1)
     if m == 16:
-        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 1, router_splits, False, True, num_warps=1, enable_fp_fusion=False)
+        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 1, router_splits, False, True, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
         _stream_paired_down[16 * (m // 2), h // (64 * 16)](aq, aqs, w2, w2_scale, ids, weights, out, h, intermediate, 64, 4, TILE_GROUP=16, num_warps=4, enable_fp_fusion=False)
         return out
     if m in (4, 8):
-        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 2, router_splits, m == 4, False, num_warps=2, enable_fp_fusion=False)
+        _select_fused_up[m + routes * (intermediate // 32),](logits, correction_bias, ids, weights, xq, xs, w13, w13_scale, aq, aqs, m, h, intermediate, 32, 2, router_splits, m == 4, False, routed_scaling_factor, num_warps=2, enable_fp_fusion=False)
         tail_width, tail_warps = (64, 4)
         tail_group = 16 if m == 8 else 96
         tail_grid = (tail_group * m, h // (tail_width * tail_group)) if m == 8 else (h // tail_width, m)
         _token_local_down[tail_grid](aq, aqs, w2, w2_scale, ids, weights, out, h, intermediate, tail_width, tail_warps, TILE_GROUP=tail_group, num_warps=tail_warps, enable_fp_fusion=False)
         return out
     if direct:
-        _select_and_up[m + routes * splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, up_panel, up_cache, num_warps=1)
+        _select_and_up[m + routes * splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, routed_scaling_factor, up_panel, up_cache, num_warps=1)
         _activate_quantize[routes, intermediate // 64](gu, aq, aqs, intermediate, splits, 1, VEC=1 if m == 1 else 2, NATIVE=True, num_warps=1, enable_fp_fusion=False)
         tail_width, tail_warps = (16, 1) if m == 1 else (64, 4)
         if m == 1:
@@ -786,7 +786,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch
             _padded_down[m, h // tail_width](aq, aqs, w2, w2_scale, ids, weights, out, h, intermediate, tail_width, tail_warps, num_warps=tail_warps, enable_fp_fusion=False)
         return out
     if stagger:
-        _select_and_shared[m + splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, num_warps=1)
+        _select_and_shared[m + splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, routed_scaling_factor, num_warps=1)
         up_jobs = m * (intermediate // 64) + m * 8 * splits * (2 * intermediate // up_width)
         _up_and_shared_activation[up_jobs,](xq, xs, w13, w13_scale, ids, groups, gu, aq, aqs, h, intermediate, m, splits, up_width, num_warps=1, enable_fp_fusion=False)
         shared_width = 16
@@ -797,7 +797,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale) -> torch
         else:
             _fused_down_combine[m, h // 64](aq, aqs, w2, w2_scale, ids, weights, down_output, out, h, intermediate, 64, 2, num_warps=2, enable_fp_fusion=False)
     else:
-        _select_routes[m,](logits, correction_bias, ids, weights, groups, router_splits, grouped, num_warps=1)
+        _select_routes[m,](logits, correction_bias, ids, weights, groups, router_splits, grouped, routed_scaling_factor, num_warps=1)
         jobs = m * 8 + 1
         activation_warps = 4
         up_grid = (splits, jobs, 2 * intermediate // up_width)

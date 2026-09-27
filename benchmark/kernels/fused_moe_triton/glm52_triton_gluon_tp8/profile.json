@@ -5,7 +5,7 @@
   "families": [
     {
       "source_file": "fused_moe/fused_moe_tp8_m1_16.py",
-      "source_sha256": "cd6e713a53a7cd6d2cd0c06c7e58f869cf9b543731f2184287e72548ab2eae21",
+      "source_sha256": "160ca0c1282da6f86093628558f8c937bfd35559a429b7a72d6d1dd8f8aa0e5c",
       "cases": [
         ["fused_moe_tp8_m2", [2, 0, 0]],
         ["fused_moe_tp8_m8", [8, 0, 0]],
@@ -17,7 +17,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m32_128.py",
-      "source_sha256": "cd670bbafb7a8b688f2a7fe83dce55e1f7a037fe18d4acb9f15f0b54a4993129",
+      "source_sha256": "12436aa5408d8dfde614d1e8b3cf87192f71914525085c01c888277177130a3d",
       "cases": [
         ["fused_moe_tp8_m64", [64, 0, 0]],
         ["fused_moe_tp8_m32", [32, 0, 0]],
@@ -27,7 +27,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m256.py",
-      "source_sha256": "972d6aeaf8c03d9de4ed02250c8163af3cde8d089e9e151e9b264c6dd3edb613",
+      "source_sha256": "86ce73c927b0dfd214325f450b295b96dc400e8f25f3470e326a2dd62a65c8df",
       "cases": [
         ["fused_moe_tp8_m256", [256, 0, 0]],
         ["fused_moe_tp8_m256_1023", [256, 0, 0], {"0": [256, 1023]}, {"contract": {}}]
@@ -35,7 +35,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
-      "source_sha256": "f12514a7bf00eb5297afdd45022275a3b3fc2d5e5ec4248afaad430cc090f9f4",
+      "source_sha256": "3eefc42fa43db3fc4b885c6e9d5be320dafed319328158d364f02110eb9dce74",
       "cases": [
         ["fused_moe_tp8_m16385_16768", [16385, 0, 0], {"0": [16385, 16768]}, {"contract": {}}],
         ["fused_moe_tp8_m4193_4193", [4193, 0, 0], {"0": [4193, 4193]}],
@@ -55,7 +55,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m1024_4192.py",
-      "source_sha256": "7f3ae5e75163be2ae87a4f6c3bf62206187c57c163ae721c0216e044fcacf800",
+      "source_sha256": "0b91f7927672a7947b6cbfbaec77788590af705fa23e5c4449f50a5eef1534a4",
       "cases": [
         ["fused_moe_tp8_m1024_1024", [1024, 0, 0], {"0": [1024, 1024]}],
         ["fused_moe_tp8_m1025_2047", [1025, 0, 0], {"0": [1025, 2047]}],
@@ -70,7 +70,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m1_16_mtp.py",
-      "source_sha256": "435fc87a80cd6073b098087df50cace11b7899ae6e9cf7da29400d60ec56263c",
+      "source_sha256": "6dd032852955665980251f357ad34c5e862680af3f647da883f59f69533d4a81",
       "cases": [
         ["fused_moe_tp8_m1_mtp", [1, 1, 0]],
         ["fused_moe_tp8_m2_mtp", [2, 1, 0]],
@@ -84,7 +84,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m32_256_mtp.py",
-      "source_sha256": "212a00b13017ab191665b23e71f1dde1d9c0d5e0355f1ccaedadcfb19f143161",
+      "source_sha256": "9113ae74129612b21172d83422a5a2150b134409e4bbd1824d1eb7e18b2d6a2a",
       "cases": [
         ["fused_moe_tp8_m18_mtp", [18, 1, 0]],
         ["fused_moe_tp8_m20_mtp", [20, 1, 0]],
@@ -110,7 +110,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m1024_4192_mtp.py",
-      "source_sha256": "036f861b1ea50ae5d116a4a27304dd07dab10699575de43ffaf6cbf2891f0b8f",
+      "source_sha256": "7c5e70737515a3782c0fe6243d8a01af718f9f3c4ffef1d7c762c02dbbf680e6",
       "cases": [
         ["fused_moe_tp8_m1024_4192_mtp", [1024, 1, 0], {"0": [1024, 4192]}, {"contract": {}}]
       ]

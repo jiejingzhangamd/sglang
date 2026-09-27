@@ -77,7 +77,7 @@ def _router_and_quantize(X, W, L, Q, QS, Counts, M: gl.constexpr, H: gl.constexp
         _quantize_input(X, Q, QS, M, H, SX, GROUPS, ROUTER_CTAS)
 
 @gluon.jit
-def _select_routes(L, Bias, Sorted, Weights, Counts, Jobs, M: gl.constexpr, TM: gl.constexpr, SPLITS: gl.constexpr):
+def _select_routes(L, Bias, Sorted, Weights, Counts, Jobs, M: gl.constexpr, TM: gl.constexpr, SPLITS: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -105,7 +105,7 @@ def _select_routes(L, Bias, Sorted, Weights, Counts, Jobs, M: gl.constexpr, TM: 
         score = gl.where(e == idx, -float('inf'), score)
     ticket = gl.atomic_add(Counts + selected_id, 1, sem='relaxed')
     gl.store(Sorted + selected_id * (triton.cdiv(M, TM) * TM) + ticket, m * 8 + rank)
-    gl.store(Weights + m * 8 + rank, selected_prob / total * 2.5)
+    gl.store(Weights + m * 8 + rank, selected_prob / total * SCALE)
     publish = ticket % TM == 0
     job = gl.atomic_add(Counts + 256 + gl.zeros_like(rank), 1, publish, sem='relaxed')
     gl.store(Jobs + job, selected_id | ticket // TM << 9, publish)
@@ -305,7 +305,7 @@ def _reduce_parts(P, Y, Weights, M: gl.constexpr, H: gl.constexpr):
     value += gl.load(Y + m * H + h).to(gl.float32)
     gl.store(Y + m * H + h, value)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     routes = m * 8
@@ -334,7 +334,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
     quant_ctas = triton.cdiv(m * (h // 32), 16)
     router_ctas = triton.cdiv(m, router_rows) * 16 * router_splits
     _router_and_quantize[router_ctas + quant_ctas,](x, router, logits, xq, xs, counts, m, h, x.stride(0), BM=router_rows, BN=16, BK=128, GROUPS=16, SPLITS=router_splits, num_warps=1, enable_fp_fusion=False)
-    _select_routes[m,](logits, correction_bias, sorted_routes, weights, counts, jobs, m, tile_rows, router_splits, num_warps=1, enable_fp_fusion=False)
+    _select_routes[m,](logits, correction_bias, sorted_routes, weights, counts, jobs, m, tile_rows, router_splits, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     _scaled_experts[scheduled * (2 * intermediate // 64),](xq, xs, w13, w13_scale, sorted_routes, counts, jobs, aq, aqs, parts, out, m, 2 * intermediate, h, GROUP=1, UP=True, BN=64, WARPS=2, BK=512, WEIGHT_CACHE='.cg', DIRECT_A=False, TM=tile_rows, num_warps=2, enable_fp_fusion=False)
     down_n = 64 if m <= 32 else 128
     down_warps = 2 if m <= 32 else 4

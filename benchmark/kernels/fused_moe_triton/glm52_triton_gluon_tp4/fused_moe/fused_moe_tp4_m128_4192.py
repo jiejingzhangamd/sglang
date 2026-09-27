@@ -94,7 +94,7 @@ def _router_quantize(X, W, L, Counts, Q, QS, M: gl.constexpr, H: gl.constexpr, S
         _quantize_input(X, Q, QS, M, H, SX, GROUPS, ROUTER_CTAS, WARPS)
 
 @gluon.jit
-def _select_routes(L, Bias, Ids, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl.constexpr):
+def _select_routes(L, Bias, Ids, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -115,7 +115,7 @@ def _select_routes(L, Bias, Ids, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl
         available &= e != idx
         score = gl.where(e == idx, -float('inf'), score)
     ticket = gl.atomic_add(Counts + m // 64 % SHARDS * 256 + selected_id, 1, e < 8, sem='relaxed')
-    weight = selected_prob / total * 2.5
+    weight = selected_prob / total * SCALE
     record = (selected_id * TICKET_STRIDE + ticket).to(gl.uint64)
     record |= weight.to(gl.uint32, bitcast=True).to(gl.uint64) << 32
     gl.store(Ids + m * 8 + e, record, e < 8)
@@ -605,7 +605,7 @@ def _shared_finish(X, XS, W, WS, Sorted, Parts, Records, Y, M: gl.constexpr, H: 
     nn = gl.arange(0, BN, gl.SliceLayout(0, output_layout))
     gl.amd.cdna4.buffer_store(total.to(Y.dtype.element_ty), Y + column * BN, mm[:, None] * H + nn[None, :], mm[:, None] < M)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
     block_m = 128
@@ -644,7 +644,7 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale):
     quant_ctas = triton.cdiv(m * (h // 32), quant_groups)
     _, _, router_ctas = _router_grid(m, router_m, router_n)
     _router_quantize[router_ctas + quant_ctas,](x, router, logits, partial_counts, xq, xs, m, h, x.stride(0), router_m, router_n, router_k, router_warps, shards, quant_groups, num_warps=router_warps, enable_fp_fusion=False)
-    _select_routes[m,](logits, correction_bias, records, partial_counts, shards, ticket_stride, num_warps=1, enable_fp_fusion=False)
+    _select_routes[m,](logits, correction_bias, records, partial_counts, shards, ticket_stride, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     _prepare_tickets[chunks + 258,](records, partial_counts, sorted_routes, up_info, jobs, m, chunks, block_m, routed_blocks, scheduled_blocks, down_blocks, wide_down, shards, ticket_stride, SKIP_SHARED_DOWN=True, num_warps=1, enable_fp_fusion=False)
     up_columns = 2 * intermediate // up_bn
     _scaled_experts[scheduled_blocks * up_columns,](xq, xs, w13, w13_scale, sorted_routes, up_info, aq, aqs, parts, out, m, 2 * intermediate, h, block_m, routed_blocks, group_up, True, up_bn, enable_fp_fusion=False)
