@@ -35,7 +35,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp8_m4193_16768.py",
-      "source_sha256": "3eefc42fa43db3fc4b885c6e9d5be320dafed319328158d364f02110eb9dce74",
+      "source_sha256": "13b4d70d590c5f8b96e954da8b917e2d1179133961d72f81f86e129881445f68",
       "cases": [
         ["fused_moe_tp8_m16385_16768", [16385, 0, 0], {"0": [16385, 16768]}, {"contract": {}}],
         ["fused_moe_tp8_m4193_4193", [4193, 0, 0], {"0": [4193, 4193]}],
