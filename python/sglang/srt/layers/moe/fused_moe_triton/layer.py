@@ -128,10 +128,10 @@ def _validate_gluon_quant_method(layer, quant_method) -> None:
     if not get_moe_runner_backend().is_gluon():
         return
 
+    from sglang.srt.layers.quantization.quark.quark import QuarkFusedMoEMethod
     from sglang.srt.layers.quantization.quark.schemes.quark_w4a4_mxfp4_moe import (
         QuarkW4A4MXFp4MoE,
     )
-    from sglang.srt.layers.quantization.quark.quark import QuarkFusedMoEMethod
 
     if not (
         isinstance(quant_method, QuarkFusedMoEMethod)
