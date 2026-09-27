@@ -133,15 +133,38 @@ def _validate_gluon_quant_method(layer, quant_method) -> None:
         QuarkW4A4MXFp4MoE,
     )
 
-    if not (
+    serialized_quark = (
         isinstance(quant_method, QuarkFusedMoEMethod)
         and isinstance(getattr(layer, "scheme", None), QuarkW4A4MXFp4MoE)
         and layer.scheme.is_checkpoint_mxfp4_serialized
-    ):
+    )
+    # GLM NextN stores its single draft layer's routed experts in BF16.  The
+    # bound GLM backend quantizes exactly this audited tensor ABI during bind;
+    # no other unquantized MoE topology is accepted here.
+    glm_nextn_bf16 = (
+        isinstance(quant_method, UnquantizedFusedMoEMethod)
+        and str(getattr(layer, "layer_name", "")).endswith("decoder.mlp.experts")
+        and getattr(layer, "num_experts", None) == 256
+        and getattr(layer, "hidden_size", None) == 6144
+        and getattr(layer, "top_k", None) == 8
+        and getattr(layer, "moe_tp_size", None) in (4, 8)
+        and getattr(layer, "intermediate_size_per_partition", None)
+        * getattr(layer, "moe_tp_size", 0)
+        == 2048
+        and getattr(layer, "w13_weight", None) is not None
+        and getattr(layer, "w2_weight", None) is not None
+        and layer.w13_weight.dtype == torch.bfloat16
+        and layer.w2_weight.dtype == torch.bfloat16
+        and tuple(layer.w13_weight.shape)
+        == (256, 2 * layer.intermediate_size_per_partition, 6144)
+        and tuple(layer.w2_weight.shape)
+        == (256, 6144, layer.intermediate_size_per_partition)
+    )
+    if not (serialized_quark or glm_nextn_bf16):
         raise ValueError(
             "--moe-runner-backend gluon currently supports only serialized "
-            "Quark W4A4 MXFP4 MoE checkpoints; FP8, BF16, online-quantized "
-            "MXFP4, and other expert formats are not supported."
+            "Quark W4A4 MXFP4 target experts or the audited GLM NextN BF16 "
+            "draft-expert ABI; other formats and topologies are not supported."
         )
 
 

@@ -119,6 +119,31 @@ def test_gluon_backend_accepts_serialized_quark_mxfp4(monkeypatch):
     _validate_gluon_quant_method(layer, quant_method)
 
 
+def test_gluon_backend_accepts_audited_glm_nextn_bf16_experts(monkeypatch):
+    from sglang.srt.layers.moe.fused_moe_triton import layer as fused_moe_layer
+    from sglang.srt.layers.quantization.unquant import UnquantizedFusedMoEMethod
+
+    monkeypatch.setattr(fused_moe_layer, "get_moe_runner_backend", lambda: _Gluon())
+    w13 = type("Weight", (), {"dtype": torch.bfloat16, "shape": (256, 512, 6144)})()
+    w2 = type("Weight", (), {"dtype": torch.bfloat16, "shape": (256, 6144, 256)})()
+    layer = type(
+        "Layer",
+        (),
+        {
+            "layer_name": "model.decoder.mlp.experts",
+            "num_experts": 256,
+            "hidden_size": 6144,
+            "top_k": 8,
+            "moe_tp_size": 8,
+            "intermediate_size_per_partition": 256,
+            "w13_weight": w13,
+            "w2_weight": w2,
+        },
+    )()
+
+    _validate_gluon_quant_method(layer, object.__new__(UnquantizedFusedMoEMethod))
+
+
 def test_gluon_backend_owns_quark_mxfp4_weight_layout(monkeypatch):
     from sglang.srt.layers.moe import utils as moe_utils
     from sglang.srt.layers.quantization.quark.schemes.quark_w4a4_mxfp4_moe import (
