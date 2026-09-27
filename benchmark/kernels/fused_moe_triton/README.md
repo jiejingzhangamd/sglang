@@ -303,3 +303,14 @@ expert, and identical packed-weight/scale tensor metadata). Integrations must
 select a GLM-5.3 MoE-only profile so unrelated GLM-5.2 attention kernels are
 not installed. The GLM-5.3 checkpoint may retain its native FP8 attention, but
 FP8 or BF16 expert weights remain unsupported by this MoE bundle.
+
+Other MoE families are not shape-compatible with this snapshot. A checkpoint
+audit rejects DeepSeek-V4 (different hidden width, top-k and expert format),
+Qwen3-Next (different hidden/expert widths, expert count, top-k and FP8
+experts), Kimi-Linear (different hidden/expert widths and BF16 experts), and
+Mixtral (different expert count, top-k and BF16 layout). They can reuse the
+generic Gluon backend boundary only after receiving model-specific kernels,
+profiles, weight preparation, and contract tests.
+Re-quantizing those experts as serialized Quark W4A4 MXFP4 is not sufficient:
+the GLM kernels still require hidden size 6144, MoE intermediate size 2048, 256
+routed experts, top-8 sigmoid routing with scale 2.5, and one shared expert.
