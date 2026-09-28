@@ -155,8 +155,7 @@ def _validate_gluon_quant_method(layer, quant_method) -> None:
         layer, "_num_local_routed", getattr(layer, "num_experts", None)
     )
     glm_nextn_topology = (
-        _GLM_NEXTN_GLUON_LOCAL_EXPERTS.get((moe_ep_size, moe_tp_size))
-        == local_routed
+        _GLM_NEXTN_GLUON_LOCAL_EXPERTS.get((moe_ep_size, moe_tp_size)) == local_routed
     )
     glm_nextn_bf16 = (
         isinstance(quant_method, UnquantizedFusedMoEMethod)
@@ -165,8 +164,7 @@ def _validate_gluon_quant_method(layer, quant_method) -> None:
         and getattr(layer, "hidden_size", None) == 6144
         and getattr(layer, "top_k", None) == 8
         and glm_nextn_topology
-        and getattr(layer, "intermediate_size_per_partition", None)
-        * moe_tp_size
+        and getattr(layer, "intermediate_size_per_partition", None) * moe_tp_size
         == 2048
         and getattr(layer, "w13_weight", None) is not None
         and getattr(layer, "w2_weight", None) is not None
