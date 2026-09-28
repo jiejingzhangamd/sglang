@@ -122,7 +122,7 @@ def _assert_hash_verified_pack(pack: Path, rows: int, sources: int) -> dict:
 
 
 def test_profile_references_complete_hash_verified_kernel_snapshot() -> None:
-    _assert_hash_verified_pack(TP4_PACK, rows=42, sources=4)
+    _assert_hash_verified_pack(TP4_PACK, rows=48, sources=4)
     _assert_hash_verified_pack(TP8_PACK, rows=64, sources=8)
 
 
@@ -144,6 +144,24 @@ def test_all_kernel_entrypoints_accept_runtime_routed_scaling() -> None:
         assert entrypoint.args.defaults[-1].value == 2.5, source.name
         assert "selected / total * 2.5" not in text, source.name
         assert "selected_prob / total * 2.5" not in text, source.name
+
+
+def test_tp4_entrypoints_accept_rank_local_expert_offsets() -> None:
+    sources = sorted((TP4_PACK / "fused_moe").glob("*.py"))
+
+    for source in sources:
+        tree = ast.parse(source.read_text())
+        entrypoint = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "fused_moe"
+        )
+        names = [argument.arg for argument in entrypoint.args.args]
+        assert names[-2:] == ["expert_start", "routed_scaling_factor"], source.name
+        assert [default.value for default in entrypoint.args.defaults[-2:]] == [
+            0,
+            2.5,
+        ]
 
 
 def test_related_shapes_share_compile_time_specialized_sources() -> None:
@@ -214,7 +232,7 @@ def test_tp4_related_shapes_share_compile_time_specialized_sources() -> None:
     sources = _exact_source_map(TP4_PACK)
 
     for mode in (0, 1):
-        assert {sources[(shape, mode)] for shape in (1, 2, 4, 8, 16)} == {
+        assert {sources[(shape, mode)] for shape in (1, 2, 4, 6, 8, 12, 16)} == {
             "fused_moe_tp4_m1_16.py"
         }
         assert {sources[(shape, mode)] for shape in (32, 64)} == {
@@ -224,3 +242,20 @@ def test_tp4_related_shapes_share_compile_time_specialized_sources() -> None:
         assert {sources[(shape, mode)] for shape in medium_shapes} == {
             "fused_moe_tp4_m128_4192.py"
         }
+
+
+def test_tp4_agentx_mtp_shapes_resolve_without_native_fallback() -> None:
+    profile = _load_profile(TP4_PACK)
+
+    for draft_width in (4, 6):
+        for batch_size in range(1, 11):
+            signature = (batch_size * draft_width, 1, 0)
+            _resolve_source(profile, signature)
+
+
+def test_tp4_all_supported_batches_resolve_without_native_fallback() -> None:
+    profile = _load_profile(TP4_PACK)
+
+    for mode in (0, 1):
+        for active_batch in range(1, 16769):
+            _resolve_source(profile, (active_batch, mode, 0))

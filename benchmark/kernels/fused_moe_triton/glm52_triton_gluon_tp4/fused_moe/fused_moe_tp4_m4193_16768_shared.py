@@ -45,7 +45,7 @@ def _router_projection(X, W, Y, M: gl.constexpr, K: gl.constexpr, SX: gl.constex
     gl.store(Y + rm[:, None] * 256 + cn[None, :], acc, rm[:, None] < M)
 
 @gluon.jit
-def _router(Logits, Bias, Ids, Weights, SCALE: gl.constexpr):
+def _router(Logits, Bias, Ids, Weights, expert_start, LOCAL_EXPERTS: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -53,6 +53,7 @@ def _router(Logits, Bias, Ids, Weights, SCALE: gl.constexpr):
     score = probability + gl.load(Bias + e).to(gl.float32)
     available = gl.full((256,), True, gl.int1, layout)
     selected = gl.full((256,), 0.0, gl.float32, layout)
+    selected_ids = gl.full((256,), 0, gl.int32, layout)
     total = 0.0
     for j in range(8):
         maximum = gl.max(score, 0)
@@ -63,10 +64,12 @@ def _router(Logits, Bias, Ids, Weights, SCALE: gl.constexpr):
         prob = gl.sum(gl.gather(probability, index, 0), 0)
         gl.store(Ids + m * 9 + j, idx)
         selected = gl.where(e == j, prob, selected)
+        selected_ids = gl.where(e == j, idx, selected_ids)
         total += prob
         available = available & (e != idx)
         score = gl.where(e == idx, -float('inf'), score)
-    gl.store(Weights + m * 8 + e, selected / total * SCALE, e < 8)
+    owned = (selected_ids >= expert_start) & (selected_ids < expert_start + LOCAL_EXPERTS)
+    gl.store(Weights + m * 8 + e, gl.where(owned, selected / total * SCALE, 0.0), e < 8)
     gl.store(Ids + m * 9 + 8, 256)
 
 @gluon.jit
@@ -427,16 +430,16 @@ def _native_up_async(X, XS, W, WS, rows, expert, column, N: gl.constexpr, K: gl.
     return acc
 
 @gluon.jit
-def _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, column, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, TILE_M: gl.constexpr):
+def _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, weight_expert, column, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, TILE_M: gl.constexpr):
     row_layout: gl.constexpr = gl.BlockedLayout([1], [64], [4], [0])
     row = block * BM + gl.arange(0, TILE_M, row_layout)
     route = gl.load(Sorted + row)
     row = gl.maximum(route // 9 + gl.where(expert == 256, M, 0), 0)
-    acc = _native_up_async(X, XS, W, Scales, row, expert, column, N, K, TILE_M, BN, BK)
+    acc = _native_up_async(X, XS, W, Scales, row, weight_expert, column, N, K, TILE_M, BN, BK)
     _store_w13_activation(acc, Y, YS, expert, block * BM, column, N)
 
 @gluon.jit
-def _w13_projection(X, XS, W, Scales, Sorted, Experts, Y, YS, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr):
+def _w13_projection(X, XS, W, Scales, Sorted, Experts, Y, YS, expert_start, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, LOCAL_EXPERTS: gl.constexpr):
     physical_pid = gl.program_id(0)
     jobs: gl.constexpr = gl.cdiv(9 * M + 257 * (BM - 1), BM) * (N // BN)
     group_base = physical_pid // 256 * 256
@@ -448,15 +451,17 @@ def _w13_projection(X, XS, W, Scales, Sorted, Experts, Y, YS, N: gl.constexpr, K
     descriptor = gl.load(Experts + block)
     if descriptor >= 0:
         expert = (descriptor & 511).to(gl.int32)
+        owned = (expert >= expert_start) & (expert < expert_start + LOCAL_EXPERTS)
+        weight_expert = gl.where(owned, expert - expert_start, LOCAL_EXPERTS)
         valid_rows = (descriptor >> 9 & 255).to(gl.int32)
         if M < 8192 and valid_rows <= 16:
-            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, column, N, K, M, BM, BN, BK, 16)
+            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, weight_expert, column, N, K, M, BM, BN, BK, 16)
         elif valid_rows <= 32:
-            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, column, N, K, M, BM, BN, BK, 32)
+            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, weight_expert, column, N, K, M, BM, BN, BK, 32)
         elif valid_rows <= 64:
-            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, column, N, K, M, BM, BN, BK, 64)
+            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, weight_expert, column, N, K, M, BM, BN, BK, 64)
         else:
-            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, column, N, K, M, BM, BN, BK, BM)
+            _project_w13_tile(X, XS, W, Scales, Sorted, Y, YS, block, expert, weight_expert, column, N, K, M, BM, BN, BK, BM)
 
 @gluon.jit
 def _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, expert, column, valid_rows, dense_base, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, TILE_M: gl.constexpr, PITCH: gl.constexpr, SCALE_CODEC: gl.constexpr):
@@ -471,22 +476,24 @@ def _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, expert
     _store_w2_panel(acc, P + dense_base.to(gl.int64) * PITCH, Codes + dense_base.to(gl.int64) * PITCH, Headers + dense_base * (N // BN), column, valid_rows, N, BN, PITCH, exponent, SCALE_CODEC)
 
 @gluon.jit
-def _w2_projection(X, XS, W, Scales, Minimum, DownExperts, P, Codes, Headers, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, PITCH: gl.constexpr, SCALE_CODEC: gl.constexpr):
+def _w2_projection(X, XS, W, Scales, Minimum, DownExperts, P, Codes, Headers, expert_start, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, PITCH: gl.constexpr, SCALE_CODEC: gl.constexpr, LOCAL_EXPERTS: gl.constexpr):
     pid = gl.program_id(0)
     tile = pid // (N // BN)
     column = pid % (N // BN)
     descriptor = gl.load(DownExperts + tile)
     if descriptor >= 0:
         expert = (descriptor & 511).to(gl.int32)
+        owned = (expert >= expert_start) & (expert < expert_start + LOCAL_EXPERTS)
+        weight_expert = gl.where(owned, expert - expert_start, LOCAL_EXPERTS)
         valid_rows = (descriptor >> 9 & 127).to(gl.int32)
         block = (descriptor >> 16 & 65535).to(gl.int32)
         dense_base = (descriptor >> 32).to(gl.int32)
         if M < 8192 and valid_rows <= 16:
-            _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, expert, column, valid_rows, dense_base, N, K, BN, BK, 16, PITCH, SCALE_CODEC)
+            _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, weight_expert, column, valid_rows, dense_base, N, K, BN, BK, 16, PITCH, SCALE_CODEC)
         elif valid_rows <= 32:
-            _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, expert, column, valid_rows, dense_base, N, K, BN, BK, 32, PITCH, SCALE_CODEC)
+            _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, weight_expert, column, valid_rows, dense_base, N, K, BN, BK, 32, PITCH, SCALE_CODEC)
         else:
-            _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, expert, column, valid_rows, dense_base, N, K, BN, BK, 64, PITCH, SCALE_CODEC)
+            _project_w2_tile(X, XS, W, Scales, Minimum, P, Codes, Headers, block, weight_expert, column, valid_rows, dense_base, N, K, BN, BK, 64, PITCH, SCALE_CODEC)
 
 @gluon.jit
 def _grouped_tile(pid, ROW_TILES: gl.constexpr, COL_TILES: gl.constexpr, GROUP_M: gl.constexpr=8):
@@ -504,13 +511,13 @@ def _grouped_tile(pid, ROW_TILES: gl.constexpr, COL_TILES: gl.constexpr, GROUP_M
     return (block, column)
 
 @gluon.jit
-def _shared_reduce(X, XS, W, Scales, Offsets, P, Codes, Headers, Weights, Inverse, Y, M: gl.constexpr, H: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, PITCH: gl.constexpr, route_count):
+def _shared_reduce(X, XS, W, Scales, Offsets, P, Codes, Headers, Weights, Inverse, Y, M: gl.constexpr, H: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, PITCH: gl.constexpr, route_count, LOCAL_EXPERTS: gl.constexpr):
     block, column = _grouped_tile(gl.program_id(0), gl.cdiv(M, BM), H // BN)
     first = block * BM
     row_layout: gl.constexpr = gl.BlockedLayout([1], [64], [4], [0])
     row = first + gl.arange(0, BM, row_layout)
     source_row = gl.load(Offsets + 256) + gl.minimum(row, M - 1)
-    acc = _native_down_projection(X, XS, W, Scales, source_row, gl.full((), 256, gl.int32), column, H, K, BM, BN, 256, False)
+    acc = _native_down_projection(X, XS, W, Scales, source_row, gl.full((), LOCAL_EXPERTS, gl.int32), column, H, K, BM, BN, 256, False)
     ep: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])
     shared = gl.convert_layout(acc.to(gl.bfloat16), ep)
     rm = first + gl.arange(0, BM, gl.SliceLayout(1, ep))
@@ -538,7 +545,7 @@ def _shared_reduce(X, XS, W, Scales, Offsets, P, Codes, Headers, Weights, Invers
 
 class _Workspace:
 
-    def __init__(self, x, intermediate):
+    def __init__(self, x, intermediate, local_experts):
         m, h = x.shape
         self.intermediate = intermediate
         block_m = self.block_m = 128
@@ -578,10 +585,10 @@ class _Workspace:
         self.aqs = empty((self.capacity, intermediate // 32), torch.uint8)
         self.headers = empty((8 * m, h // 256), torch.uint8)
         self.output = empty((m, h))
-        self.scale_codec = m >= 8192
+        self.scale_codec = m >= 8192 and local_experts == 256
         self.weight_minimum = empty((256, h // 256), torch.uint8) if self.scale_codec else None
 
-def _route_and_pack(x, router, correction_bias, work, w2_scale, routed_scaling_factor):
+def _route_and_pack(x, router, correction_bias, work, w2_scale, expert_start, local_experts, routed_scaling_factor):
     m, h = x.shape
     router_rows = 128 if 16383 <= m <= 16384 else 32 if m < 8192 else 64
     router_columns = 128 if m > 16384 else 64
@@ -590,31 +597,32 @@ def _route_and_pack(x, router, correction_bias, work, w2_scale, routed_scaling_f
         router_k = 256
     quantize_groups, quantize_values = (256, 32)
     _router_projection[triton.cdiv(m, router_rows), 256 // router_columns](x, router, work.logits, m, h, x.stride(0), router_rows, router_k, router_columns)
-    _router[m,](work.logits, correction_bias, work.ids, work.weights, routed_scaling_factor, num_warps=1)
+    _router[m,](work.logits, correction_bias, work.ids, work.weights, expert_start, local_experts, routed_scaling_factor, num_warps=1)
     _chunk_counts[max(work.chunks, triton.cdiv(work.capacity, 1024)),](work.ids, work.partial_counts, work.sorted_routes, work.experts, work.down_experts, work.routes, work.chunks, work.capacity, work.block_m, work.down_tiles)
     _chunk_prefix[257,](work.partial_counts, work.partial_counts, work.counts, work.chunks, triton.next_power_of_2(work.chunks))
     _build_expert_blocks[257,](work.counts, work.offsets, work.experts, work.down_experts, work.block_m, triton.next_power_of_2(triton.cdiv(m, work.block_m)), triton.next_power_of_2(triton.cdiv(m, 64)))
     minimum_tiles = h if work.scale_codec else 0
     _scatter_quantize[work.chunks + triton.cdiv(m * h // 32, quantize_groups) + minimum_tiles,](work.ids, work.offsets, work.partial_counts, work.sorted_routes, work.inverse, x, work.xq, work.xs, work.routes, work.chunks, m, h, x.stride(0), quantize_groups, quantize_values, w2_scale, work.weight_minimum, work.scale_codec)
 
-def _project_experts(w13, w13_scale, w2, w2_scale, work):
+def _project_experts(w13, w13_scale, w2, w2_scale, work, expert_start, local_experts):
     m, h = work.output.shape
     intermediate = work.intermediate
     up_columns, up_k = (256, 256)
     down_columns, down_k = (256, 512)
-    _w13_projection[work.capacity // work.block_m * (2 * intermediate // up_columns),](work.xq, work.xs, w13, w13_scale, work.sorted_routes, work.experts, work.aq, work.aqs, 2 * intermediate, h, m, work.block_m, up_columns, up_k, enable_fp_fusion=False)
-    _w2_projection[work.down_tiles * (h // down_columns),](work.aq, work.aqs, w2, w2_scale, work.weight_minimum, work.down_experts, work.parts, work.codes, work.headers, h, intermediate, m, down_columns, down_k, work.payload_pitch, work.scale_codec, enable_fp_fusion=False, waves_per_eu=2, llvm_fn_attrs=[['amdgpu-sched-strategy', 'iterative-ilp']])
+    _w13_projection[work.capacity // work.block_m * (2 * intermediate // up_columns),](work.xq, work.xs, w13, w13_scale, work.sorted_routes, work.experts, work.aq, work.aqs, expert_start, 2 * intermediate, h, m, work.block_m, up_columns, up_k, local_experts, enable_fp_fusion=False)
+    _w2_projection[work.down_tiles * (h // down_columns),](work.aq, work.aqs, w2, w2_scale, work.weight_minimum, work.down_experts, work.parts, work.codes, work.headers, expert_start, h, intermediate, m, down_columns, down_k, work.payload_pitch, work.scale_codec, local_experts, enable_fp_fusion=False, waves_per_eu=2, llvm_fn_attrs=[['amdgpu-sched-strategy', 'iterative-ilp']])
 
-def _finish(w2, w2_scale, work):
+def _finish(w2, w2_scale, work, local_experts):
     m, h = work.output.shape
     reduce_rows, reduce_columns = (32, 256)
-    _shared_reduce[triton.cdiv(m, reduce_rows) * (h // reduce_columns),](work.aq, work.aqs, w2, w2_scale, work.offsets, work.parts, work.codes, work.headers, work.weights, work.inverse, work.output, m, h, work.intermediate, reduce_rows, reduce_columns, work.payload_pitch, 8, enable_fp_fusion=False)
+    _shared_reduce[triton.cdiv(m, reduce_rows) * (h // reduce_columns),](work.aq, work.aqs, w2, w2_scale, work.offsets, work.parts, work.codes, work.headers, work.weights, work.inverse, work.output, m, h, work.intermediate, reduce_rows, reduce_columns, work.payload_pitch, 8, local_experts, enable_fp_fusion=False)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, expert_start=0, routed_scaling_factor=2.5):
     intermediate = w13.shape[1] // 2
-    assert w2.shape == (257, x.shape[1], intermediate // 2)
-    work = _Workspace(x, intermediate)
-    _route_and_pack(x, router, correction_bias, work, w2_scale, routed_scaling_factor)
-    _project_experts(w13, w13_scale, w2, w2_scale, work)
-    _finish(w2, w2_scale, work)
+    local_experts = w13.shape[0] - 1
+    assert w2.shape == (local_experts + 1, x.shape[1], intermediate // 2)
+    work = _Workspace(x, intermediate, local_experts)
+    _route_and_pack(x, router, correction_bias, work, w2_scale, expert_start, local_experts, routed_scaling_factor)
+    _project_experts(w13, w13_scale, w2, w2_scale, work, expert_start, local_experts)
+    _finish(w2, w2_scale, work, local_experts)
     return work.output

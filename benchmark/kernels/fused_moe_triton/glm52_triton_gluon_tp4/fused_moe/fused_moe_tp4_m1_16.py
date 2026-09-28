@@ -74,7 +74,12 @@ def _front_split(X, W, L, Q, QS, M: gl.constexpr, H: gl.constexpr, SX: gl.conste
         gl.store(QS + M * H // 32 + g, ss, g < M * (H // 32))
 
 @gluon.jit
-def _select_split(L, Bias, Ids, Weights, M: gl.constexpr, SPLITS: gl.constexpr, SCALE: gl.constexpr):
+def _local_expert(expert, expert_start, LOCAL_EXPERTS: gl.constexpr):
+    owned = (expert >= expert_start) & (expert < expert_start + LOCAL_EXPERTS)
+    return gl.where(owned, expert - expert_start, LOCAL_EXPERTS), owned
+
+@gluon.jit
+def _select_split(L, Bias, Ids, Weights, expert_start, M: gl.constexpr, SPLITS: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -101,8 +106,9 @@ def _select_split(L, Bias, Ids, Weights, M: gl.constexpr, SPLITS: gl.constexpr, 
         selected_id = gl.where(e == j, idx, selected_id)
         available &= e != idx
         score = gl.where(e == idx, -float('inf'), score)
-    gl.store(Ids + m * 8 + e, selected_id, e < 8)
-    gl.store(Weights + m * 8 + e, selected_prob / total * SCALE, e < 8)
+    local_id, owned = _local_expert(selected_id, expert_start, LOCAL_EXPERTS)
+    gl.store(Ids + m * 8 + e, local_id, e < 8)
+    gl.store(Weights + m * 8 + e, gl.where(owned, selected_prob / total * SCALE, 0.0), e < 8)
 
 @gluon.jit
 def _first_score_match(eligible, e):
@@ -112,7 +118,7 @@ def _first_score_match(eligible, e):
     return gl.gather(wave_id & 511, zero, 0).reshape(())
 
 @gluon.jit
-def _select_for_projection(L, Bias, Ids, Weights, rank, column, M: gl.constexpr, SPLITS: gl.constexpr, WARPS: gl.constexpr, SCALE: gl.constexpr):
+def _select_for_projection(L, Bias, Ids, Weights, expert_start, rank, column, M: gl.constexpr, SPLITS: gl.constexpr, WARPS: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, SCALE: gl.constexpr):
     token = 0 if M == 1 else rank // 9
     rank = rank if M == 1 else rank % 9
     expert = 256
@@ -144,8 +150,9 @@ def _select_for_projection(L, Bias, Ids, Weights, rank, column, M: gl.constexpr,
                 expert = gl.where(j == 0, idx, expert)
                 available &= e != idx
                 score = gl.where(e == idx, -float('inf'), score)
-            gl.store(Ids + token * 8 + e, selected_id, e < 8)
-            gl.store(Weights + token * 8 + e, selected_prob / total * SCALE, e < 8)
+            local_id, owned = _local_expert(selected_id, expert_start, LOCAL_EXPERTS)
+            gl.store(Ids + token * 8 + e, local_id, e < 8)
+            gl.store(Weights + token * 8 + e, gl.where(owned, selected_prob / total * SCALE, 0.0), e < 8)
         else:
             for j in range(rank + 1):
                 maximum = gl.max(score, 0)
@@ -156,7 +163,9 @@ def _select_for_projection(L, Bias, Ids, Weights, rank, column, M: gl.constexpr,
                 expert = idx
                 available &= e != idx
                 score = gl.where(e == idx, -float('inf'), score)
-    return gl.inline_asm_elementwise('v_readfirstlane_b32 $0, $1', constraints='=s,v', args=[expert], dtype=gl.int32, is_pure=True, pack=1)
+    expert = gl.inline_asm_elementwise('v_readfirstlane_b32 $0, $1', constraints='=s,v', args=[expert], dtype=gl.int32, is_pure=True, pack=1)
+    local_id, _ = _local_expert(expert, expert_start, LOCAL_EXPERTS)
+    return local_id
 
 @gluon.jit
 def _weight_offset(n, k, K: gl.constexpr):
@@ -205,15 +214,15 @@ def _packed_weight(W, WS, expert, column, base, N: gl.constexpr, K: gl.constexpr
     return (words, scales)
 
 @gluon.jit
-def _expert(X, XS, W, WS, Ids, Q, QS, P, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, UP: gl.constexpr, WARPS: gl.constexpr=4, CACHE: gl.constexpr='.cg', COLUMN_GROUP: gl.constexpr=1, REGISTER_A: gl.constexpr=False, REGISTER_B: gl.constexpr=False, DIRECT_SCALES: gl.constexpr=False, FUSED_SELECT: gl.constexpr=False, Logits=None, Bias=None, Weights=None, ROUTER_SPLITS: gl.constexpr=8, PACK_SCALES: gl.constexpr=False, ROUTED_SCALE: gl.constexpr=2.5):
+def _expert(X, XS, W, WS, Ids, Q, QS, P, expert_start, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, UP: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, WARPS: gl.constexpr=4, CACHE: gl.constexpr='.cg', COLUMN_GROUP: gl.constexpr=1, REGISTER_A: gl.constexpr=False, REGISTER_B: gl.constexpr=False, DIRECT_SCALES: gl.constexpr=False, FUSED_SELECT: gl.constexpr=False, Logits=None, Bias=None, Weights=None, ROUTER_SPLITS: gl.constexpr=8, PACK_SCALES: gl.constexpr=False, ROUTED_SCALE: gl.constexpr=2.5):
     SINGLE_TOKEN: gl.constexpr = M <= 4 or M == 8
     route = gl.program_id(0) // COLUMN_GROUP
     column = gl.program_id(1) * COLUMN_GROUP + gl.program_id(0) % COLUMN_GROUP
     shared = route % 9 == 8
     if FUSED_SELECT:
-        expert = _select_for_projection(Logits, Bias, Ids, Weights, route, column, M, ROUTER_SPLITS, WARPS, ROUTED_SCALE)
+        expert = _select_for_projection(Logits, Bias, Ids, Weights, expert_start, route, column, M, ROUTER_SPLITS, WARPS, LOCAL_EXPERTS, ROUTED_SCALE)
     else:
-        expert = gl.load(Ids + route // 9 * 8 + route % 9, ~shared, 256)
+        expert = gl.load(Ids + route // 9 * 8 + route % 9, ~shared, LOCAL_EXPERTS)
     route_layout: gl.constexpr = gl.BlockedLayout([1, 1], [8, 8], [WARPS, 1], [0, 1])
     token_base = 0 if M == 1 else route // 9 if M > 1 and SINGLE_TOKEN else route // (16 * 9) * 16
     token = token_base + gl.arange(0, 16, gl.SliceLayout(1, route_layout))
@@ -228,10 +237,18 @@ def _expert(X, XS, W, WS, Ids, Q, QS, P, M: gl.constexpr, N: gl.constexpr, K: gl
         first = gl.min(gl.min(gl.where(match, token[:, None] * 9 + rank[None, :], M * 9), 1), 0)
         owner = gl.where(shared, token_base * 9 + 8, first)
         slot = gl.where(shared, 8, slot)
+        # Non-local routed experts map to one zero sentinel.  Keep each route
+        # independent so no uninitialized activation can leak through a zero
+        # route weight.
+        sentinel = (expert == LOCAL_EXPERTS) & ~shared
+        owner = gl.where(sentinel, route, owner)
+        slot = gl.where(sentinel, route % 9, slot)
     if M > 1 and SINGLE_TOKEN:
         valid = token == route // 9
     else:
         valid = (token < M) & (slot >= 0)
+        if not SINGLE_TOKEN:
+            valid = gl.where(sentinel, token == route // 9, valid)
     routes = token * 9 + gl.maximum(slot, 0)
     if route == owner:
         mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[1, WARPS])
@@ -352,7 +369,7 @@ def _reduce_parts(P, Weights, Y, H: gl.constexpr):
     gl.store(Y + m * H + h, value)
 
 @gluon.jit
-def _tiny_projection(X, XS, W, WS, Ids, token, column, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, WARPS: gl.constexpr, SHARED: gl.constexpr, CACHE: gl.constexpr):
+def _tiny_projection(X, XS, W, WS, Ids, token, column, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, WARPS: gl.constexpr, SHARED: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, CACHE: gl.constexpr):
     TN: gl.constexpr = BN if SHARED else 8 * BN
     mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=False, warps_per_cta=[1, WARPS])
     ad: gl.constexpr = gl.DotOperandLayout(0, mma, 16)
@@ -365,20 +382,20 @@ def _tiny_projection(X, XS, W, WS, Ids, token, column, N: gl.constexpr, K: gl.co
     ki = gl.arange(0, BK // 8, gl.SliceLayout(0, load_layout))
     vn = gl.arange(0, TN, gl.SliceLayout(1, load_layout))
     n = column * BN + vn % BN
-    expert = 256 if SHARED else gl.load(Ids + token * 8 + vn // BN)
+    expert = LOCAL_EXPERTS if SHARED else gl.load(Ids + token * 8 + vn // BN)
     ar = gl.arange(0, 16, gl.SliceLayout(1, asl))
     ar = token * 9 + (ar * 0 + 8 if SHARED else ar % 8)
     ak = gl.arange(0, BK // 32, gl.SliceLayout(0, asl))
     bvn = gl.arange(0, TN, gl.SliceLayout(1, bsl))
     bn = column * BN + bvn % BN
-    be = 256 if SHARED else gl.load(Ids + token * 8 + bvn // BN)
+    be = LOCAL_EXPERTS if SHARED else gl.load(Ids + token * 8 + bvn // BN)
     bk = gl.arange(0, BK // 32, gl.SliceLayout(0, bsl))
     acc = gl.zeros((16, TN), gl.float32, mma)
     for base in range(K // BK):
         aw = gl.load(X.to(gl.pointer_type(gl.uint32)) + row[:, None] * (K // 8) + base * (BK // 8) + ki[None, :])
         offset = _weight_offset(n[:, None], base * BK + 8 * ki[None, :], K) // 4
         if SHARED:
-            offset += 256 * (N * K // 8)
+            offset += LOCAL_EXPERTS * (N * K // 8)
         else:
             offset += expert[:, None] * (N * K // 8)
         offset = gl.max_contiguous(gl.multiple_of(offset, (1, 4)), (1, 4))
@@ -389,7 +406,7 @@ def _tiny_projection(X, XS, W, WS, Ids, token, column, N: gl.constexpr, K: gl.co
         so = bn[:, None] // 32 * (K // 4) + sk[None, :] // 8 * 64
         so += sk[None, :] % 4 * 16 + bn[:, None] % 16
         if SHARED:
-            so += 256 * N * (K // 128)
+            so += LOCAL_EXPERTS * N * (K // 128)
         else:
             so += be[:, None] * N * (K // 128)
         bsw = gl.amd.cdna4.buffer_load(WS.to(gl.pointer_type(gl.uint32)), so)
@@ -401,7 +418,7 @@ def _tiny_projection(X, XS, W, WS, Ids, token, column, N: gl.constexpr, K: gl.co
     return acc
 
 @gluon.jit
-def _down_reduce_tiny(X, XS, W, WS, Ids, Weights, Y, N: gl.constexpr, K: gl.constexpr, GRID_TRANSPOSE: gl.constexpr, BN: gl.constexpr=32, BK: gl.constexpr=512, WARPS: gl.constexpr=2, CACHE: gl.constexpr='.ca', COLUMN_GROUP: gl.constexpr=0):
+def _down_reduce_tiny(X, XS, W, WS, Ids, Weights, Y, N: gl.constexpr, K: gl.constexpr, GRID_TRANSPOSE: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, BN: gl.constexpr=32, BK: gl.constexpr=512, WARPS: gl.constexpr=2, CACHE: gl.constexpr='.ca', COLUMN_GROUP: gl.constexpr=0):
     gl.static_assert((WARPS == 1 or WARPS == 2) and BN == 16 * WARPS)
     if COLUMN_GROUP:
         token = gl.program_id(0) // COLUMN_GROUP
@@ -410,7 +427,7 @@ def _down_reduce_tiny(X, XS, W, WS, Ids, Weights, Y, N: gl.constexpr, K: gl.cons
         token = gl.program_id(1) if GRID_TRANSPOSE else gl.program_id(0)
         column = gl.program_id(0) if GRID_TRANSPOSE else gl.program_id(1)
     mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=False, warps_per_cta=[1, WARPS])
-    acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, False, CACHE)
+    acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, False, LOCAL_EXPERTS, CACHE)
     vn = gl.arange(0, 8 * BN, gl.SliceLayout(0, mma))
     diagonal = gl.gather(acc, vn[None, :] // BN, 0).reshape((8, BN))
     ep: gl.constexpr = gl.DistributedLinearLayout(reg_bases=[[1, 0], [2, 0], [4, 0]], lane_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [0, 0], [0, 0]], warp_bases=[[0, 16]] if WARPS == 2 else [], block_bases=[], shape=[8, BN])
@@ -420,16 +437,17 @@ def _down_reduce_tiny(X, XS, W, WS, Ids, Weights, Y, N: gl.constexpr, K: gl.cons
         part = gl.gather(diagonal, gl.full((1, BN), rank, gl.int32, ep), 0)
         weight = gl.load(Weights + token * 8 + rank)
         value += part * weight
-    shared_acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, True, CACHE)
+    shared_acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, True, LOCAL_EXPERTS, CACHE)
     shared = gl.gather(shared_acc, gl.full((1, BN), 0, gl.int32, mma), 0)
     shared = gl.convert_layout(shared, ep).to(gl.bfloat16).to(gl.float32)
     value += shared
     n = column * BN + gl.arange(0, BN, gl.SliceLayout(0, ep))
     gl.store(Y + token * N + n[None, :], value)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, expert_start=0, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
+    local_experts = w13.shape[0] - 1
 
     def empty(shape, dtype=torch.bfloat16):
         return torch.empty(shape, device=x.device, dtype=dtype)
@@ -445,19 +463,19 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_s
     out = empty((m, h))
     _front_split[triton.cdiv(m, 16) * 16 * splits + triton.cdiv(m * (h // 32), 16),](x, router, logits, xq, xs, m, h, x.stride(0), splits, num_warps=1, enable_fp_fusion=False)
     if m > 4 and m != 8:
-        _select_split[m,](logits, correction_bias, ids, weights, m, splits, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
+        _select_split[m,](logits, correction_bias, ids, weights, expert_start, m, splits, local_experts, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     up_warps = 1 if m in (4, 8) else 2
     up_k = 512 if m == 4 else 1024 if m <= 4 or m == 16 else 256
     up_group = 16 if m in (2, 4, 8) else 8 if m == 16 else 1
     up_cache = '.ca' if m in (2, 4, 8) else '.cg'
-    _expert[m * 9 * up_group, 2 * intermediate // (64 * up_group)](xq, xs, w13, w13_scale, ids, aq, aqs, parts, m, 2 * intermediate, h, 64, up_k, True, up_warps, CACHE=up_cache, COLUMN_GROUP=up_group, REGISTER_A=m <= 4 or m == 8, REGISTER_B=m <= 4 or m in (8, 16), FUSED_SELECT=m <= 4 or m == 8, Logits=logits, Bias=correction_bias, Weights=weights, ROUTER_SPLITS=splits, PACK_SCALES=m == 1, ROUTED_SCALE=routed_scaling_factor, num_warps=up_warps, enable_fp_fusion=False)
+    _expert[m * 9 * up_group, 2 * intermediate // (64 * up_group)](xq, xs, w13, w13_scale, ids, aq, aqs, parts, expert_start, m, 2 * intermediate, h, 64, up_k, True, local_experts, up_warps, CACHE=up_cache, COLUMN_GROUP=up_group, REGISTER_A=m <= 4 or m == 8, REGISTER_B=m <= 4 or m in (8, 16), FUSED_SELECT=m <= 4 or m == 8, Logits=logits, Bias=correction_bias, Weights=weights, ROUTER_SPLITS=splits, PACK_SCALES=m == 1, ROUTED_SCALE=routed_scaling_factor, num_warps=up_warps, enable_fp_fusion=False)
     if m <= 4 or m in (8, 16):
         down_width = 16 if m == 2 else 32
         down_warps = 1 if m == 2 else 2
         transpose = m > 1
         down_group = 16 if m in (8, 16) else 0
         grid = (m * down_group, h // (down_width * down_group)) if down_group else (h // down_width, m) if transpose else (m, h // down_width)
-        _down_reduce_tiny[grid](aq, aqs, w2, w2_scale, ids, weights, out, h, intermediate, transpose, down_width, 512, down_warps, COLUMN_GROUP=down_group, num_warps=down_warps, enable_fp_fusion=False)
+        _down_reduce_tiny[grid](aq, aqs, w2, w2_scale, ids, weights, out, h, intermediate, transpose, local_experts, down_width, 512, down_warps, COLUMN_GROUP=down_group, num_warps=down_warps, enable_fp_fusion=False)
     else:
         down_n = 64
         down_warps = 2
@@ -465,6 +483,6 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_s
         down_group = 8 if m >= 8 else 1
         down_cache = '.ca' if m > 8 else '.cg'
         down_registers = m >= 8
-        _expert[m * 9 * down_group, h // (down_n * down_group)](aq, aqs, w2, w2_scale, ids, aq, aqs, parts, m, h, intermediate, down_n, down_k, False, down_warps, down_cache, down_group, REGISTER_A=down_registers, REGISTER_B=down_registers, DIRECT_SCALES=down_registers, num_warps=down_warps, enable_fp_fusion=False)
+        _expert[m * 9 * down_group, h // (down_n * down_group)](aq, aqs, w2, w2_scale, ids, aq, aqs, parts, expert_start, m, h, intermediate, down_n, down_k, False, local_experts, down_warps, down_cache, down_group, REGISTER_A=down_registers, REGISTER_B=down_registers, DIRECT_SCALES=down_registers, num_warps=down_warps, enable_fp_fusion=False)
         _reduce_parts[m, h // 256](parts, weights, out, h, num_warps=1, enable_fp_fusion=False)
     return out

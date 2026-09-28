@@ -5,23 +5,29 @@
   "families": [
     {
       "source_file": "fused_moe/fused_moe_tp4_m1_16.py",
-      "source_sha256": "6626ff4a3bca53a8e37fd16644a5c4291b63ebf5fdab4eac7799f0003967aade",
+      "source_sha256": "2fd1abb1750701c936e6191e6a36802177a9b4aab6e26eddd5dc752c4135e022",
       "cases": [
         ["fused_moe_tp4_m1", [1, 0, 0]],
         ["fused_moe_tp4_m2", [2, 0, 0]],
         ["fused_moe_tp4_m4", [4, 0, 0]],
+        ["fused_moe_tp4_m6", [6, 0, 0]],
         ["fused_moe_tp4_m8", [8, 0, 0]],
+        ["fused_moe_tp4_m12", [12, 0, 0]],
         ["fused_moe_tp4_m16", [16, 0, 0]],
         ["fused_moe_tp4_m1", [1, 1, 0]],
         ["fused_moe_tp4_m2", [2, 1, 0]],
         ["fused_moe_tp4_m4", [4, 1, 0]],
+        ["fused_moe_tp4_m6", [6, 1, 0]],
         ["fused_moe_tp4_m8", [8, 1, 0]],
-        ["fused_moe_tp4_m16", [16, 1, 0]]
+        ["fused_moe_tp4_m12", [12, 1, 0]],
+        ["fused_moe_tp4_m16", [16, 1, 0]],
+        ["fused_moe_tp4_m1_64", [1, 0, 0], {"0": [1, 64]}, {"contract": {}}],
+        ["fused_moe_tp4_m1_64", [1, 1, 0], {"0": [1, 64]}, {"contract": {}}]
       ]
     },
     {
       "source_file": "fused_moe/fused_moe_tp4_m32_64.py",
-      "source_sha256": "2b116d8cd2b7a80816730d0167a746d6bc2673b9ed47605a300440a4003f8f7d",
+      "source_sha256": "25b201a13371cc5397888464a81777268b9b4762c8cd88ff1427399cba975518",
       "cases": [
         ["fused_moe_tp4_m32", [32, 0, 0]],
         ["fused_moe_tp4_m64", [64, 0, 0]],
@@ -31,7 +37,7 @@
     },
     {
       "source_file": "fused_moe/fused_moe_tp4_m128_4192.py",
-      "source_sha256": "c0ebe0d4d089524d3580c60d49f4d75a7b7c03f8dc276ccf845b06ff59b81e52",
+      "source_sha256": "14f2c00fc0046984cc466676c238aab546f73a82b2535f814482e63229d8bdf6",
       "cases": [
         ["fused_moe_tp4_m128", [128, 0, 0]],
         ["fused_moe_tp4_m256", [256, 0, 0]],
@@ -40,7 +46,7 @@
         ["fused_moe_tp4_m3072", [3072, 0, 0]],
         ["fused_moe_tp4_m4096", [4096, 0, 0]],
         ["fused_moe_tp4_m4192", [4192, 0, 0]],
-        ["fused_moe_tp4_m1024_4192", [1024, 0, 0], {"0": [1024, 4192]}, {"contract": {}}],
+        ["fused_moe_tp4_m65_4192", [65, 0, 0], {"0": [65, 4192]}, {"contract": {}}],
         ["fused_moe_tp4_m128", [128, 1, 0]],
         ["fused_moe_tp4_m256", [256, 1, 0]],
         ["fused_moe_tp4_m1024", [1024, 1, 0]],
@@ -48,12 +54,12 @@
         ["fused_moe_tp4_m3072", [3072, 1, 0]],
         ["fused_moe_tp4_m4096", [4096, 1, 0]],
         ["fused_moe_tp4_m4192", [4192, 1, 0]],
-        ["fused_moe_tp4_m1024_4192", [1024, 1, 0], {"0": [1024, 4192]}, {"contract": {}}]
+        ["fused_moe_tp4_m65_4192", [65, 1, 0], {"0": [65, 4192]}, {"contract": {}}]
       ]
     },
     {
       "source_file": "fused_moe/fused_moe_tp4_m4193_16768_shared.py",
-      "source_sha256": "b0df00c0fede229779bfcb9d4ab18441ec46d5a97cfb067e41385253130b0d0d",
+      "source_sha256": "1e8dd41fd1c7c2d48eea15dc57c4b652ef6ef0c69bebcb64d753db127286eab8",
       "cases": [
         ["fused_moe_tp4_m4193", [4193, 0, 0]],
         ["fused_moe_tp4_m6144", [6144, 0, 0]],

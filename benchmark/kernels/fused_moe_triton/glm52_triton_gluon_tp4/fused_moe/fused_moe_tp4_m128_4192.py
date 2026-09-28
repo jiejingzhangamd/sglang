@@ -94,7 +94,7 @@ def _router_quantize(X, W, L, Counts, Q, QS, M: gl.constexpr, H: gl.constexpr, S
         _quantize_input(X, Q, QS, M, H, SX, GROUPS, ROUTER_CTAS, WARPS)
 
 @gluon.jit
-def _select_routes(L, Bias, Ids, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl.constexpr, SCALE: gl.constexpr):
+def _select_routes(L, Bias, Ids, Counts, expert_start, SHARDS: gl.constexpr, TICKET_STRIDE: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, SCALE: gl.constexpr):
     layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])
     m = gl.program_id(0)
     e = gl.arange(0, 256, layout)
@@ -115,7 +115,8 @@ def _select_routes(L, Bias, Ids, Counts, SHARDS: gl.constexpr, TICKET_STRIDE: gl
         available &= e != idx
         score = gl.where(e == idx, -float('inf'), score)
     ticket = gl.atomic_add(Counts + m // 64 % SHARDS * 256 + selected_id, 1, e < 8, sem='relaxed')
-    weight = selected_prob / total * SCALE
+    owned = (selected_id >= expert_start) & (selected_id < expert_start + LOCAL_EXPERTS)
+    weight = gl.where(owned, selected_prob / total * SCALE, 0.0)
     record = (selected_id * TICKET_STRIDE + ticket).to(gl.uint64)
     record |= weight.to(gl.uint32, bitcast=True).to(gl.uint64) << 32
     gl.store(Ids + m * 8 + e, record, e < 8)
@@ -377,7 +378,7 @@ def _load_direct_weight(W, S, expert, column, base, N: gl.constexpr, K: gl.const
     return (b, scales)
 
 @gluon.jit
-def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, live, packed_rows, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, ROUTED_BLOCKS: gl.constexpr, UP: gl.constexpr, TM: gl.constexpr):
+def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, live, packed_rows, expert_start, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr, ROUTED_BLOCKS: gl.constexpr, UP: gl.constexpr, TM: gl.constexpr, LOCAL_EXPERTS: gl.constexpr):
     DIRECT_UP: gl.constexpr = UP and TM > 64 and (M > 1536)
     mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=not (UP and M > 2560), warps_per_cta=[1, 4] if DIRECT_UP or TM <= 64 else [2, 2], tiles_per_warp=[1, 2] if UP and (not DIRECT_UP) and (M <= 1536 or M > 2560) else [1, 1])
     ad: gl.constexpr = gl.DotOperandLayout(0, mma, 16)
@@ -387,6 +388,8 @@ def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, l
     al: gl.constexpr = gl.BlockedLayout([1, 4], [8, 8], [4, 1], [1, 0])
     mi = gl.arange(0, TM, gl.SliceLayout(1, al))
     shared = expert == 256
+    owned = (expert >= expert_start) & (expert < expert_start + LOCAL_EXPERTS)
+    weight_expert = gl.where(owned, expert - expert_start, LOCAL_EXPERTS)
     if UP:
         arena_row = gl.load(Sorted + ROUTED_BLOCKS * BM + block)
         if shared:
@@ -428,8 +431,8 @@ def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, l
         if M <= 1536:
             a_words = gl.amd.cdna4.buffer_load(X.to(gl.pointer_type(gl.uint32)), row[:, None] * (K // 8) + ki[None, :])
             sa_words = gl.amd.cdna4.buffer_load(XS.to(gl.pointer_type(gl.uint32)), scale_row[:, None] * (K // 128) + scale_word[None, :])
-            scales = _load_up_weight_scales(WS, expert, column, 0, N, K, BN, BK)
-            _prefetch_packed_weight(W, b_slots.index(0), expert, column, 0, N, K, BN, BK, '.cg')
+            scales = _load_up_weight_scales(WS, weight_expert, column, 0, N, K, BN, BK)
+            _prefetch_packed_weight(W, b_slots.index(0), weight_expert, column, 0, N, K, BN, BK, '.cg')
             for base in range(K // BK):
                 gl.amd.cdna4.async_copy.wait_group(0)
                 gl.barrier()
@@ -444,19 +447,19 @@ def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, l
                 if base + 1 < K // BK:
                     a_words = gl.amd.cdna4.buffer_load(X.to(gl.pointer_type(gl.uint32)), row[:, None] * (K // 8) + (base + 1) * (BK // 8) + ki[None, :])
                     sa_words = gl.amd.cdna4.buffer_load(XS.to(gl.pointer_type(gl.uint32)), scale_row[:, None] * (K // 128) + (base + 1) * (BK // 128) + scale_word[None, :])
-                    scales = _load_up_weight_scales(WS, expert, column, base + 1, N, K, BN, BK)
-                    _prefetch_packed_weight(W, b_slots.index((base + 1) % 2), expert, column, base + 1, N, K, BN, BK, '.cg')
+                    scales = _load_up_weight_scales(WS, weight_expert, column, base + 1, N, K, BN, BK)
+                    _prefetch_packed_weight(W, b_slots.index((base + 1) % 2), weight_expert, column, base + 1, N, K, BN, BK, '.cg')
                 acc = gl.amd.cdna4.mfma_scaled(a, sa, 'e2m1', b, sb, 'e2m1', acc)
         else:
-            _prefetch_packed_weight(W, b_slots.index(0), expert, column, 0, N, K, BN, BK, '.cg')
+            _prefetch_packed_weight(W, b_slots.index(0), weight_expert, column, 0, N, K, BN, BK, '.cg')
             for base in range(K // BK):
                 a_words = gl.amd.cdna4.buffer_load(X.to(gl.pointer_type(gl.uint32)), row[:, None] * (K // 8) + base * (BK // 8) + ki[None, :])
                 sa_words = gl.amd.cdna4.buffer_load(XS.to(gl.pointer_type(gl.uint32)), scale_row[:, None] * (K // 128) + base * (BK // 128) + scale_word[None, :])
-                scales = _load_up_weight_scales(WS, expert, column, base, N, K, BN, BK)
+                scales = _load_up_weight_scales(WS, weight_expert, column, base, N, K, BN, BK)
                 gl.amd.cdna4.async_copy.wait_group(0)
                 gl.barrier()
                 if base + 1 < K // BK:
-                    _prefetch_packed_weight(W, b_slots.index((base + 1) % 2), expert, column, base + 1, N, K, BN, BK, '.cg')
+                    _prefetch_packed_weight(W, b_slots.index((base + 1) % 2), weight_expert, column, base + 1, N, K, BN, BK, '.cg')
                 a_shared.store(_word_bytes(a_words))
                 as_shared.store(_word_bytes(sa_words))
                 bs_shared.store(scales)
@@ -477,9 +480,9 @@ def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, l
                 as_shared.store(sa_bytes)
             CACHE: gl.constexpr = '.cg' if M <= 1536 or (not UP and (M <= 2560 or TM == 16 or (M > 3584 and M <= 4096 and (TM <= 64)))) else ''
             if DIRECT_B:
-                b, scales = _load_direct_weight(W, WS, expert, column, base, N, K, BN, BK, bd, CACHE, UP)
+                b, scales = _load_direct_weight(W, WS, weight_expert, column, base, N, K, BN, BK, bd, CACHE, UP)
             else:
-                scales = _load_packed_weight(W, WS, b_shared, expert, column, base, N, K, BN, BK, UP, CACHE)
+                scales = _load_packed_weight(W, WS, b_shared, weight_expert, column, base, N, K, BN, BK, UP, CACHE)
             if M <= 1536:
                 a_shared.store(a)
             bs_shared.store(scales)
@@ -497,7 +500,7 @@ def _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, l
         _store_down_projection(acc, Parts, Y, block, column, live, dense_base, shared, M, N, BM, BN, TM, ROUTED_BLOCKS)
 
 @gluon.jit
-def _scaled_experts(X, XS, W, WS, Sorted, Info, Q, QS, Parts, Y, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, ROUTED_BLOCKS: gl.constexpr, GROUP: gl.constexpr, UP: gl.constexpr, UP_BN: gl.constexpr=128):
+def _scaled_experts(X, XS, W, WS, Sorted, Info, Q, QS, Parts, Y, expert_start, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, ROUTED_BLOCKS: gl.constexpr, GROUP: gl.constexpr, UP: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, UP_BN: gl.constexpr=128):
     pid = gl.program_id(0)
     COLS: gl.constexpr = N // (UP_BN if UP else 256)
     tile = pid // (GROUP * COLS) * GROUP + pid % GROUP
@@ -513,13 +516,13 @@ def _scaled_experts(X, XS, W, WS, Sorted, Info, Q, QS, Parts, Y, M: gl.constexpr
         SHORT_BN: gl.constexpr = UP_BN if UP else 256
         TALL_BN: gl.constexpr = UP_BN if UP else 128
         if live <= 16:
-            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, panel, expert, live, packed_rows, M, N, K, BM, SHORT_BN, 256, ROUTED_BLOCKS, UP, 16)
+            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, panel, expert, live, packed_rows, expert_start, M, N, K, BM, SHORT_BN, 256, ROUTED_BLOCKS, UP, 16, LOCAL_EXPERTS)
         elif live <= 32:
-            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, panel, expert, live, packed_rows, M, N, K, BM, SHORT_BN, 256, ROUTED_BLOCKS, UP, 32)
+            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, panel, expert, live, packed_rows, expert_start, M, N, K, BM, SHORT_BN, 256, ROUTED_BLOCKS, UP, 32, LOCAL_EXPERTS)
         elif live <= 64:
-            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, panel, expert, live, packed_rows, M, N, K, BM, SHORT_BN, 256, ROUTED_BLOCKS, UP, 64)
+            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, panel, expert, live, packed_rows, expert_start, M, N, K, BM, SHORT_BN, 256, ROUTED_BLOCKS, UP, 64, LOCAL_EXPERTS)
         else:
-            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, live, packed_rows, M, N, K, BM, TALL_BN, 256, ROUTED_BLOCKS, UP, BM)
+            _scaled_tile(X, XS, W, WS, Sorted, Q, QS, Parts, Y, block, column, expert, live, packed_rows, expert_start, M, N, K, BM, TALL_BN, 256, ROUTED_BLOCKS, UP, BM, LOCAL_EXPERTS)
 
 @gluon.jit
 def _sum_routed_ranks(Parts, records, total, column, M: gl.constexpr, TM: gl.constexpr, BN: gl.constexpr, BEGIN: gl.constexpr, END: gl.constexpr):
@@ -538,7 +541,7 @@ def _sum_routed_ranks(Parts, records, total, column, M: gl.constexpr, TM: gl.con
     return total
 
 @gluon.jit
-def _shared_finish(X, XS, W, WS, Sorted, Parts, Records, Y, M: gl.constexpr, H: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, ROUTED_BLOCKS: gl.constexpr, TM: gl.constexpr=32, BN: gl.constexpr=128):
+def _shared_finish(X, XS, W, WS, Sorted, Parts, Records, Y, M: gl.constexpr, H: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, ROUTED_BLOCKS: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, TM: gl.constexpr=32, BN: gl.constexpr=128):
     WARPS: gl.constexpr = 4
     DIRECT: gl.constexpr = M <= 1536
     EARLY: gl.constexpr = 0 if M <= 1536 else 8
@@ -584,9 +587,9 @@ def _shared_finish(X, XS, W, WS, Sorted, Parts, Records, Y, M: gl.constexpr, H: 
         a_shared.store(_word_bytes(a_words))
         as_shared.store(_word_bytes(sa_words))
         if DIRECT:
-            b, scales = _load_direct_weight(W, WS, 256, column, base, H, K, BN, BK, bd, '')
+            b, scales = _load_direct_weight(W, WS, LOCAL_EXPERTS, column, base, H, K, BN, BK, bd, '')
         else:
-            scales = _load_packed_weight(W, WS, b_shared, 256, column, base, H, K, BN, BK, False, '')
+            scales = _load_packed_weight(W, WS, b_shared, LOCAL_EXPERTS, column, base, H, K, BN, BK, False, '')
         bs_shared.store(scales)
         if not DIRECT:
             b = b_native.load(bd)
@@ -605,9 +608,10 @@ def _shared_finish(X, XS, W, WS, Sorted, Parts, Records, Y, M: gl.constexpr, H: 
     nn = gl.arange(0, BN, gl.SliceLayout(0, output_layout))
     gl.amd.cdna4.buffer_store(total.to(Y.dtype.element_ty), Y + column * BN, mm[:, None] * H + nn[None, :], mm[:, None] < M)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5):
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, expert_start=0, routed_scaling_factor=2.5):
     m, h = x.shape
     intermediate = w13.shape[1] // 2
+    local_experts = w13.shape[0] - 1
     block_m = 128
     routed_blocks = triton.cdiv(m * 8, block_m) + 256
     blocks = routed_blocks + triton.cdiv(m, block_m)
@@ -644,10 +648,10 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_s
     quant_ctas = triton.cdiv(m * (h // 32), quant_groups)
     _, _, router_ctas = _router_grid(m, router_m, router_n)
     _router_quantize[router_ctas + quant_ctas,](x, router, logits, partial_counts, xq, xs, m, h, x.stride(0), router_m, router_n, router_k, router_warps, shards, quant_groups, num_warps=router_warps, enable_fp_fusion=False)
-    _select_routes[m,](logits, correction_bias, records, partial_counts, shards, ticket_stride, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
+    _select_routes[m,](logits, correction_bias, records, partial_counts, expert_start, shards, ticket_stride, local_experts, routed_scaling_factor, num_warps=1, enable_fp_fusion=False)
     _prepare_tickets[chunks + 258,](records, partial_counts, sorted_routes, up_info, jobs, m, chunks, block_m, routed_blocks, scheduled_blocks, down_blocks, wide_down, shards, ticket_stride, SKIP_SHARED_DOWN=True, num_warps=1, enable_fp_fusion=False)
     up_columns = 2 * intermediate // up_bn
-    _scaled_experts[scheduled_blocks * up_columns,](xq, xs, w13, w13_scale, sorted_routes, up_info, aq, aqs, parts, out, m, 2 * intermediate, h, block_m, routed_blocks, group_up, True, up_bn, enable_fp_fusion=False)
-    _scaled_experts[down_blocks * (h // 256),](aq, aqs, w2, w2_scale, sorted_routes, jobs, aq, aqs, parts, out, m, h, intermediate, block_m, routed_blocks, group_down, False)
-    _shared_finish[triton.cdiv(m, 32), h // 128](aq, aqs, w2, w2_scale, sorted_routes, parts, records, out, m, h, intermediate, block_m, routed_blocks, enable_fp_fusion=False)
+    _scaled_experts[scheduled_blocks * up_columns,](xq, xs, w13, w13_scale, sorted_routes, up_info, aq, aqs, parts, out, expert_start, m, 2 * intermediate, h, block_m, routed_blocks, group_up, True, local_experts, up_bn, enable_fp_fusion=False)
+    _scaled_experts[down_blocks * (h // 256),](aq, aqs, w2, w2_scale, sorted_routes, jobs, aq, aqs, parts, out, expert_start, m, h, intermediate, block_m, routed_blocks, group_down, False, local_experts)
+    _shared_finish[triton.cdiv(m, 32), h // 128](aq, aqs, w2, w2_scale, sorted_routes, parts, records, out, m, h, intermediate, block_m, routed_blocks, local_experts, enable_fp_fusion=False)
     return out

@@ -263,7 +263,7 @@ from kernel names.
 ### GLM-5.2 Triton Gluon TP4 and TP8 kernel snapshots
 
 `glm52_triton_gluon_tp4/` and `glm52_triton_gluon_tp8/` contain the consolidated
-gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 42 target and
+gfx950 MXFP4 fused-MoE implementations. The TP4 profile has 48 target and
 MTP/draft dispatch entries backed by four source files. The TP8 profile has 64
 entries backed by eight source files. Relative to the per-shape snapshot, TP4
 uses 4 instead of 20 source files and 2,086 instead of 10,576 kernel lines
@@ -281,6 +281,46 @@ the remaining shapes dispatch to the corresponding compile-time-specialized
 shape family instead of falling back to the native MoE backend. The CPU test
 expands both profiles and verifies the recorded source digests and continuous
 coverage without importing GPU dependencies.
+
+The same four TP4-family sources also cover total TP8 with EP2, EP4, and EP8.
+The runtime passes the rank's global `expert_start`; each kernel derives the
+local expert count from its packed weights, maps non-local routes to one zero
+sentinel, and emits rank-local routed output. SGLang's existing TP8 post-expert
+all-reduce reconstructs the global routed result, while the shared dense expert
+stays on its native path. This adds no EP-specific kernel copies. The audited
+local layouts are respectively 128 experts × 512 intermediate, 64 × 1024, and
+32 × 2048. Strict dispatch profiles continuously cover every M from 1 through
+16768 in both target and MTP/draft modes; an uncovered shape is an error, not a
+native-MoE fallback.
+
+The compact `m128_4192` source was checked directly against rank-masked AITER
+output at the previously uncovered M=65, 96, 192, and 255 shapes. All outputs
+were finite. Latency is the slowest rank's median Gluon kernel time; AITER was
+used as the numerical oracle, not as a timed baseline in this check.
+
+| Layout | Relative L2 range | Maximum absolute error | Gluon latency range (us) |
+|:--|--:|--:|--:|
+| TP8/EP2 | 0.004556–0.004568 | 0.000488 | 233.9–271.2 |
+| TP8/EP4 | 0.004146–0.004172 | 0.000488 | 313.6–384.0 |
+| TP8/EP8 | 0.003849–0.003886 | 0.000977 | 547.2–677.2 |
+
+#### Strict AgentX TP8 EP coverage canary
+
+Each EP layout was also run with the InferenceX PR 3329 AgentX configuration,
+concurrency 1, MTP `5/6/1`, a 16384-token prefill chunk, and a 120-second
+profiling window. Both target and draft used Gluon under strict dispatch; A2A
+and native-MoE fallback were disabled. These are independent coverage canaries,
+not a controlled performance comparison between EP layouts.
+
+| Layout | Observed gap-family M | P90 ITV (ms) | Output tok/s | Requests | Reports | Skipped/errors |
+|:--|:--|--:|--:|--:|--:|--:|
+| TP8/EP2 | 203, 212 | 5.206 | 38.023 | 10 | 16 | 0 / 0 |
+| TP8/EP4 | 203 | 5.387 | 34.716 | 9 | 16 | 0 / 0 |
+| TP8/EP8 | 204 | 6.579 | 46.191 | 9 | 16 | 0 / 0 |
+
+All three server containers exited successfully. The specialization reports
+showed eight target and eight draft ranks, and every observed shape selected a
+Gluon family; no strict rejection, native fallback, or GPU fault was present.
 
 #### Strict AgentX TP8/EP1 C=10 A/B
 

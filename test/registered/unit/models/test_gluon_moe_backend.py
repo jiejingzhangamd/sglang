@@ -122,13 +122,33 @@ def test_gluon_backend_accepts_serialized_quark_mxfp4(monkeypatch):
     _validate_gluon_quant_method(layer, quant_method)
 
 
-def test_gluon_backend_accepts_audited_glm_nextn_bf16_experts(monkeypatch):
+@pytest.mark.parametrize(
+    ("ep_size", "tp_size", "local_experts", "intermediate"),
+    (
+        (1, 4, 256, 512),
+        (1, 8, 256, 256),
+        (2, 4, 128, 512),
+        (4, 2, 64, 1024),
+        (8, 1, 32, 2048),
+    ),
+)
+def test_gluon_backend_accepts_audited_glm_nextn_bf16_experts(
+    monkeypatch, ep_size, tp_size, local_experts, intermediate
+):
     from sglang.srt.layers.moe.fused_moe_triton import layer as fused_moe_layer
     from sglang.srt.layers.quantization.unquant import UnquantizedFusedMoEMethod
 
     monkeypatch.setattr(fused_moe_layer, "get_moe_runner_backend", lambda: _Gluon())
-    w13 = type("Weight", (), {"dtype": torch.bfloat16, "shape": (256, 512, 6144)})()
-    w2 = type("Weight", (), {"dtype": torch.bfloat16, "shape": (256, 6144, 256)})()
+    w13 = type(
+        "Weight",
+        (),
+        {"dtype": torch.bfloat16, "shape": (local_experts, 2 * intermediate, 6144)},
+    )()
+    w2 = type(
+        "Weight",
+        (),
+        {"dtype": torch.bfloat16, "shape": (local_experts, 6144, intermediate)},
+    )()
     layer = type(
         "Layer",
         (),
@@ -137,8 +157,10 @@ def test_gluon_backend_accepts_audited_glm_nextn_bf16_experts(monkeypatch):
             "num_experts": 256,
             "hidden_size": 6144,
             "top_k": 8,
-            "moe_tp_size": 8,
-            "intermediate_size_per_partition": 256,
+            "moe_ep_size": ep_size,
+            "moe_tp_size": tp_size,
+            "_num_local_routed": local_experts,
+            "intermediate_size_per_partition": intermediate,
             "w13_weight": w13,
             "w2_weight": w2,
         },
