@@ -1,5 +1,5 @@
 # fmt: off
-"""DeepSeek-V4 Pro TP8 fused MoE specialization for c=1 decode."""
+"""DeepSeek-V4 Pro TP8 fused router with native A16W4 experts for c=1 decode."""
 
 import torch
 import triton
@@ -816,11 +816,11 @@ def _stream_paired_down(X, XS, W, Scales, Ids, Weights, Y, N: gl.constexpr, K: g
 def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, expert_start=0, routed_scaling_factor=2.5, swiglu_limit=10.0) -> torch.Tensor:
     m, h = x.shape
     fp4_dtype = getattr(torch, 'float4_e2m1fn_x2', None)
-    if fp4_dtype is not None and w13.dtype == fp4_dtype:
-        w13 = w13.view(torch.uint8)
-    if fp4_dtype is not None and w2.dtype == fp4_dtype:
-        w2 = w2.view(torch.uint8)
-    if w13.dtype != torch.uint8 or w2.dtype != torch.uint8:
+    if fp4_dtype is not None and w13.dtype == torch.uint8:
+        w13 = w13.view(fp4_dtype)
+    if fp4_dtype is not None and w2.dtype == torch.uint8:
+        w2 = w2.view(fp4_dtype)
+    if fp4_dtype is None or w13.dtype != fp4_dtype or w2.dtype != fp4_dtype:
         raise RuntimeError("DeepSeek-V4 Pro Gluon MoE requires packed FP4 weights")
     if m not in (1, 4, 6):
         raise RuntimeError(f"DeepSeek-V4 Pro Gluon MoE does not support M={m}")
@@ -837,59 +837,32 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, expert_s
     if swiglu_limit != 10.0:
         raise RuntimeError("DeepSeek-V4 Pro Gluon MoE requires swiglu_limit=10")
     routes = m * 9
-    direct = m in (1, 4, 6)
-    grouped = not direct
-    stagger = m <= 8
-    splits = 4 if direct else 12
     router_splits = 14
     router_block = 512
-    quant_vector = 2
-    quant_groups = 4 if m == 16 else 8
-    up_width = 16 if m <= 2 else 32
-    up_panel = 256 if m <= 2 else 128
-    up_cache = '.cg' if m <= 2 else 'buffer'
-    down_width = 32
 
     def empty(shape, dtype=torch.bfloat16):
         return torch.empty(shape, dtype=dtype, device=x.device)
     logits = empty((m, router_splits, 512), torch.float32)
     ids = empty((routes,), torch.int32)
-    groups = None if direct else empty((257,), torch.uint64)
     weights = empty((routes,), torch.float32)
-    xq = empty((2 * m, h // 2), torch.uint8)
-    xs = empty((2 * m, h // 32), torch.uint8)
-    gu = empty((routes, splits, 2 * intermediate), torch.float32)
-    aq = empty((routes, intermediate // 2), torch.uint8)
-    aqs = empty((routes, intermediate // 32), torch.uint8)
-    down_output = empty((routes, h), torch.float32)
-    out = empty((m, h))
-    _router_linear[24 * router_splits + m * (h // (32 * quant_groups)) + int(grouped),](x, router, logits, xq, xs, groups, h, x.stride(0), m, router_splits, router_block, 16, grouped, quant_vector, quant_groups, NATIVE=False, num_warps=1)
-    if direct:
-        _select_and_up[m + routes * splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, expert_start, m, h, intermediate, router_splits, splits, up_width, local_experts, routed_scaling_factor, up_panel, up_cache, num_warps=1)
-        _activate_quantize[routes, intermediate // 64](gu, aq, aqs, intermediate, splits, 1, VEC=1 if m == 1 else 2, NATIVE=True, LIMIT=swiglu_limit, num_warps=1, enable_fp_fusion=False)
-        _route_down[m, 9, h // 16](aq, aqs, w2, w2_scale, ids, down_output, h, intermediate, 16, local_experts, num_warps=1, enable_fp_fusion=False)
-        _combine[m, h // 256](down_output, weights, out, h, 256, 1, 4, num_warps=4, enable_fp_fusion=False)
-        return out
-    if stagger:
-        _select_and_shared[m + splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, routed_scaling_factor, num_warps=1)
-        up_jobs = m * (intermediate // 64) + m * 8 * splits * (2 * intermediate // up_width)
-        _up_and_shared_activation[up_jobs,](xq, xs, w13, w13_scale, ids, groups, gu, aq, aqs, h, intermediate, m, splits, up_width, num_warps=1, enable_fp_fusion=False)
-        shared_width = 16
-        _activation_and_shared_down[h // shared_width + m * 8 * (intermediate // 64),](gu, aq, aqs, w2, w2_scale, ids, groups, down_output, h, intermediate, m, splits, num_warps=1, enable_fp_fusion=False)
-        if m == 3:
-            tail_width, tail_warps = (64, 4)
-            _diagonal_down[m, h // tail_width](aq, aqs, w2, w2_scale, ids, weights, down_output, out, h, intermediate, tail_width, tail_warps, num_warps=tail_warps, enable_fp_fusion=False)
-        else:
-            _fused_down_combine[m, h // 64](aq, aqs, w2, w2_scale, ids, weights, down_output, out, h, intermediate, 64, 2, num_warps=2, enable_fp_fusion=False)
-    else:
-        _select_routes[m,](logits, correction_bias, ids, weights, groups, router_splits, grouped, routed_scaling_factor, num_warps=1)
-        jobs = m * 8 + 1
-        activation_warps = 4
-        up_grid = (splits, jobs, 2 * intermediate // up_width)
-        _expert_projection[up_grid](xq, xs, w13, w13_scale, ids, groups, gu, 2 * intermediate, h, m, True, splits, up_width, BK=up_panel, num_warps=1)
-        _activate_quantize[routes, intermediate // (64 * activation_warps)](gu, aq, aqs, intermediate, splits, activation_warps, num_warps=activation_warps, enable_fp_fusion=False)
-        down_grid = (jobs, h // down_width, 1)
-        _expert_projection[down_grid](aq, aqs, w2, w2_scale, ids, groups, down_output, h, intermediate, m, False, 1, down_width, num_warps=1)
-        combine_vector, combine_warps = (1, 4)
-        _combine[m, h // 256](down_output, weights, out, h, 256, combine_vector, combine_warps, num_warps=combine_warps, enable_fp_fusion=False)
-    return out
+    scratch = empty((1,), torch.uint8)
+    _router_linear[24 * router_splits,](x, router, logits, scratch, scratch, None, h, x.stride(0), m, router_splits, router_block, 16, False, 2, 8, NATIVE=False, num_warps=1)
+    _select_routes[m,](logits, correction_bias, ids, weights, None, router_splits, False, routed_scaling_factor, expert_start, local_experts, num_warps=1)
+
+    from aiter import ActivationType, QuantType
+    from aiter.fused_moe import fused_moe as aiter_fused_moe
+    from aiter.ops.flydsl.moe_common import GateMode
+
+    return aiter_fused_moe(
+        hidden_states=x,
+        w1=w13,
+        w2=w2,
+        topk_weight=weights.view(m, 9)[:, :6].contiguous(),
+        topk_ids=ids.view(m, 9)[:, :6].contiguous(),
+        activation=ActivationType.Swiglu,
+        quant_type=QuantType.per_1x32,
+        w1_scale=w13_scale,
+        w2_scale=w2_scale,
+        swiglu_limit=swiglu_limit,
+        gate_mode=GateMode.INTERLEAVE.value,
+    )

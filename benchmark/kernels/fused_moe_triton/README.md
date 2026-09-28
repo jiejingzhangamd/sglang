@@ -415,33 +415,38 @@ Other MoE families are not shape-compatible with the GLM snapshot. Qwen3-Next,
 Kimi-Linear, and Mixtral still require model-specific kernels, profiles, weight
 preparation, and contract tests.
 
-DeepSeek-V4 Pro has a separate built-in gfx950 backend and kernel for TP8/EP1
-and TP8/EP4. It
+DeepSeek-V4 Pro has a separate built-in gfx950 backend for TP8/EP1 and
+TP8/EP4. It
 accepts only the checkpoint's serialized FP4 routed experts with UE8M0 scales,
 keeps the FP8 shared expert on its native linear path, and implements its
 384-expert ungrouped sqrtsoftplus top-6 router and clamped SwiGLU. The first
 three hash-routed layers remain on the native AMD runner. EP4 maps global
 routes to 96 rank-local experts, uses the audited local intermediate size 1536,
 and zeros non-local contributions before SGLang's native post-expert
-collective. The Gluon kernel is
+collective. The backend specializes the router and top-k selection with Gluon,
+then deliberately retains AITER's native A16W4 expert kernels and standard
+gate/up weight layout. The specialized path is
 intentionally limited to the c=1 decode shapes M=1 (target) and M=4/6 (MTP);
 other active-token counts, DeepSeek-V4 variants, FP8/BF16 experts, TP/EP
 layouts other than TP8/EP1 and TP8/EP4, and non-gfx950 devices fail explicitly.
-The EP4 production-dtype GPU test covers all three shapes plus rank-local route
-IDs and zeroed non-local weights. A real checkpoint layer-3 rank shard was also
-loaded, TP-sharded, AITER-shuffled, and executed at M=1/4/6; all outputs were
-finite and nonzero. A full eight-GPU server canary remains separate from this
-single-rank kernel validation.
+The EP4 production-dtype GPU test covers all three shapes, nonzero MTP-versus-
+independent-target consistency, rank-local route IDs, and zeroed non-local
+weights. A real checkpoint layer-3 EP4 rank shard was loaded, TP-sharded, and
+AITER-shuffled for a paired comparison against the ordinary PyTorch routing
+chain plus the same AITER expert kernels:
 
-| TP8/EP4 rank-local M | P50 kernel latency | P90 kernel latency |
-|---:|---:|---:|
-| 1 | 0.0932 ms | 0.1036 ms |
-| 4 | 0.1190 ms | 0.1426 ms |
-| 6 | 0.1436 ms | 0.1522 ms |
+| M | Default P50 | Specialized P50 | P50 speedup | Default P90 | Specialized P90 | P90 speedup | Relative L2 | Cosine |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.3326 ms | 0.1986 ms | 1.67x | 0.3498 ms | 0.2066 ms | 1.69x | 0.253% | 0.999997 |
+| 4 | 0.3371 ms | 0.2106 ms | 1.60x | 0.3484 ms | 0.2202 ms | 1.58x | 0.132% | 0.999999 |
+| 6 | 0.3260 ms | 0.2139 ms | 1.52x | 0.3355 ms | 0.2224 ms | 1.51x | 0.058% | 1.000000 |
 
-The real-weight timing used 10 warmups and 100 event-timed repetitions on one
-MI355X. It measures one rank's routed MoE kernel and is not an end-to-end ITV
-claim.
+Both arms were also checked against a dense dequantized-weight reference. Their
+relative L2 errors were comparable (default 0.248--0.281%, specialized
+0.248--0.290%). Timing used 20 warmups and 200 event-timed repetitions on one
+MI355X. It measures one rank's routed MoE path and is not an end-to-end ITV
+claim. A full eight-GPU server canary remains separate from this single-rank
+validation.
 Re-quantizing those experts as serialized Quark W4A4 MXFP4 is not sufficient:
 the GLM kernels still require hidden size 6144, MoE intermediate size 2048, 256
 routed experts, top-8 normalized sigmoid routing, and one shared expert. The
