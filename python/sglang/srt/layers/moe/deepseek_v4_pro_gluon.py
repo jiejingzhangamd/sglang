@@ -24,6 +24,11 @@ class DeepseekV4ProGluonMoeBackend(GluonMoeBackend):
     """
 
     _SUPPORTED_M = frozenset((1, 4, 6))
+    _SUPPORTED_TOPOLOGIES = {
+        # (moe_ep_size, moe_tp_size): (local_experts, local_intermediate)
+        (1, 8): (384, 384),
+        (4, 2): (96, 1536),
+    }
 
     def __init__(self) -> None:
         self.layer = None
@@ -35,6 +40,13 @@ class DeepseekV4ProGluonMoeBackend(GluonMoeBackend):
 
         quant_method = getattr(experts, "quant_method", None)
         config = layer.config
+        topology = (
+            getattr(layer, "moe_ep_size", None),
+            getattr(layer, "moe_tp_size", None),
+        )
+        local_shape = self._SUPPORTED_TOPOLOGIES.get(topology)
+        local_experts = getattr(layer, "_num_local_routed", None)
+        local_intermediate = getattr(layer, "intermediate_size_per_partition", None)
         checks = {
             "DeepSeek-V4 Pro model type": getattr(config, "model_type", None)
             == "deepseek_v4",
@@ -51,7 +63,8 @@ class DeepseekV4ProGluonMoeBackend(GluonMoeBackend):
             "normalized routing": getattr(config, "norm_topk_prob", None) is True,
             "SwiGLU clamp 10": getattr(config, "swiglu_limit", None) == 10.0,
             "TP8": getattr(layer, "tp_size", None) == 8,
-            "EP1": getattr(layer, "moe_ep_size", None) == 1,
+            "TP8/EP1 or TP8/EP4 topology": local_shape
+            == (local_experts, local_intermediate),
             "non-hash layer": not getattr(layer, "is_hash", False),
             "router correction bias": getattr(
                 layer.gate, "e_score_correction_bias", None
@@ -93,6 +106,11 @@ class DeepseekV4ProGluonMoeBackend(GluonMoeBackend):
         )
         self.layer = layer
         self.experts = experts
+        self.local_experts = local_experts
+        self.local_intermediate = local_intermediate
+        self.expert_start = (
+            getattr(layer, "_expert_storage_rank", layer.moe_ep_rank) * local_experts
+        )
 
     def forward(
         self,
@@ -127,17 +145,20 @@ class DeepseekV4ProGluonMoeBackend(GluonMoeBackend):
         w2 = self.experts.w2_weight
         s13 = self.experts.w13_weight_scale_inv
         s2 = self.experts.w2_weight_scale_inv
+        expected_w13 = (self.local_experts, 2 * self.local_intermediate, 3584)
+        expected_w2 = (self.local_experts, 7168, self.local_intermediate // 2)
         _require(
-            tuple(w13.shape) == (384, 768, 3584)
-            and tuple(w2.shape) == (384, 7168, 192),
+            tuple(w13.shape) == expected_w13 and tuple(w2.shape) == expected_w2,
             "DeepSeek-V4 Pro Gluon MoE received incompatible FP4 weights",
         )
         _require(
             getattr(w13, "is_shuffled", False) and getattr(w2, "is_shuffled", False),
             "DeepSeek-V4 Pro FP4 expert weights were not shuffled",
         )
+        down_scale_groups = math.ceil((self.local_intermediate // 32) / 8) * 8
         _require(
-            s13.numel() == 384 * 768 * 224 and s2.numel() == 384 * 7168 * 16,
+            s13.numel() == self.local_experts * 2 * self.local_intermediate * 224
+            and s2.numel() == self.local_experts * 7168 * down_scale_groups,
             "DeepSeek-V4 Pro Gluon MoE received incompatible UE8M0 scales",
         )
         from sglang.srt.layers.moe.gluon_kernels.deepseek_v4_pro_tp8 import (
@@ -152,6 +173,7 @@ class DeepseekV4ProGluonMoeBackend(GluonMoeBackend):
             s13,
             w2,
             s2,
+            expert_start=self.expert_start,
             routed_scaling_factor=float(self.layer.routed_scaling_factor),
             swiglu_limit=float(self.layer.config.swiglu_limit),
         )

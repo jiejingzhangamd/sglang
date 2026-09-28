@@ -197,7 +197,7 @@ def test_gluon_backend_accepts_deepseek_v4_serialized_fp4(monkeypatch):
     _validate_gluon_quant_method(object(), quant_method)
 
 
-def _deepseek_v4_pro_backend_shell(monkeypatch):
+def _deepseek_v4_pro_backend_shell(monkeypatch, ep_size=1, ep_rank=0):
     from sglang.srt import utils
     from sglang.srt.layers.moe.deepseek_v4_pro_gluon import (
         DeepseekV4ProGluonMoeBackend,
@@ -228,11 +228,18 @@ def _deepseek_v4_pro_backend_shell(monkeypatch):
         norm_topk_prob=True,
         swiglu_limit=10.0,
     )
+    moe_tp_size = 8 // ep_size
+    local_experts = 384 // ep_size
     layer = SimpleNamespace(
         config=config,
         layer_id=3,
         tp_size=8,
-        moe_ep_size=1,
+        moe_ep_size=ep_size,
+        moe_ep_rank=ep_rank,
+        moe_tp_size=moe_tp_size,
+        _expert_storage_rank=ep_rank,
+        _num_local_routed=local_experts,
+        intermediate_size_per_partition=3072 // moe_tp_size,
         is_hash=False,
         gate=SimpleNamespace(e_score_correction_bias=object()),
         _enable_a2a_moe=False,
@@ -247,13 +254,30 @@ def _deepseek_v4_pro_backend_shell(monkeypatch):
     return backend, layer, experts
 
 
-def test_deepseek_v4_pro_backend_binds_exact_contract(monkeypatch):
-    backend, layer, experts = _deepseek_v4_pro_backend_shell(monkeypatch)
+@pytest.mark.parametrize(("ep_size", "ep_rank"), ((1, 0), (4, 0), (4, 3)))
+def test_deepseek_v4_pro_backend_binds_exact_contract(monkeypatch, ep_size, ep_rank):
+    backend, layer, experts = _deepseek_v4_pro_backend_shell(
+        monkeypatch, ep_size, ep_rank
+    )
 
     backend.bind(layer, experts)
 
     assert backend.layer is layer
     assert backend.experts is experts
+    assert backend.local_experts == 384 // ep_size
+    assert backend.local_intermediate == 3072 // (8 // ep_size)
+    assert backend.expert_start == ep_rank * (384 // ep_size)
+
+
+def test_deepseek_v4_pro_backend_rejects_other_ep_topologies(monkeypatch):
+    backend, layer, experts = _deepseek_v4_pro_backend_shell(monkeypatch)
+    layer.moe_ep_size = 2
+    layer.moe_tp_size = 4
+    layer._num_local_routed = 192
+    layer.intermediate_size_per_partition = 768
+
+    with pytest.raises(RuntimeError, match="TP8/EP1 or TP8/EP4 topology"):
+        backend.bind(layer, experts)
 
 
 def test_deepseek_v4_pro_backend_rejects_other_variants(monkeypatch):

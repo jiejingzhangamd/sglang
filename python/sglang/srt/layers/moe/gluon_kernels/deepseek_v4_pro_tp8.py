@@ -136,7 +136,12 @@ def _next_expert(score, available, e):
     return idx
 
 @gluon.jit
-def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GROUPED: gl.constexpr, SCALE: gl.constexpr):
+def _local_expert(expert, expert_start, LOCAL_EXPERTS: gl.constexpr):
+    owned = (expert >= expert_start) & (expert < expert_start + LOCAL_EXPERTS)
+    return gl.where(owned, expert - expert_start, LOCAL_EXPERTS), owned
+
+@gluon.jit
+def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GROUPED: gl.constexpr, SCALE: gl.constexpr, expert_start=0, LOCAL_EXPERTS: gl.constexpr=384):
     row = gl.program_id(0)
     layout: gl.constexpr = gl.BlockedLayout([8], [64], [gl.num_warps()], [0])
     record_layout: gl.constexpr = gl.BlockedLayout([1], [64], [gl.num_warps()], [0])
@@ -156,13 +161,15 @@ def _select_routes(Logits, Bias, Ids, Weights, Groups, SPLITS: gl.constexpr, GRO
     for j in gl.static_range(6):
         index = gl.full((1,), j, gl.int32, record_layout)
         total += gl.sum(gl.gather(selected, index, 0), 0)
-    gl.store(Ids + row * 9 + r, selected_ids, r < 9)
+    local_ids, owned = _local_expert(selected_ids, expert_start, LOCAL_EXPERTS)
+    owned = owned & (r < 6)
+    gl.store(Ids + row * 9 + r, local_ids, r < 9)
     if GROUPED:
         membership = (r + 1).to(gl.uint64) << row * 4
-        gl.amd.cdna4.buffer_atomic_or(Groups.to(gl.pointer_type(gl.int64)), selected_ids, membership.to(gl.int64, bitcast=True), r < 8, sem='relaxed')
+        gl.amd.cdna4.buffer_atomic_or(Groups.to(gl.pointer_type(gl.int64)), local_ids, membership.to(gl.int64, bitcast=True), (r < 8) & owned, sem='relaxed')
     gl.store(
         Weights + row * 9 + r,
-        gl.where(r < 6, selected / total * SCALE, 0.0),
+        gl.where(owned, selected / total * SCALE, 0.0),
         r < 9,
     )
 
@@ -208,7 +215,7 @@ def _expert_coordinates(N: gl.constexpr, M: gl.constexpr, UP: gl.constexpr, SPLI
     return (route, tile, split)
 
 @gluon.jit
-def _expert_projection(X, XS, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, UP: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, SHARED_ONLY: gl.constexpr=False, STAGGER: gl.constexpr=False, RECOMPUTE_ROUTE: gl.constexpr=False, Logits=None, Bias=None, ROUTER_SPLITS: gl.constexpr=12, BK: gl.constexpr=128, WEIGHT_CACHE: gl.constexpr='buffer'):
+def _expert_projection(X, XS, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.constexpr, M: gl.constexpr, UP: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, SHARED_ONLY: gl.constexpr=False, STAGGER: gl.constexpr=False, RECOMPUTE_ROUTE: gl.constexpr=False, Logits=None, Bias=None, ROUTER_SPLITS: gl.constexpr=12, BK: gl.constexpr=128, WEIGHT_CACHE: gl.constexpr='buffer', expert_start=0, LOCAL_EXPERTS: gl.constexpr=384):
     PREFETCH: gl.constexpr = RECOMPUTE_ROUTE and M == 1
     if RECOMPUTE_ROUTE:
         work = gl.program_id(0) - M
@@ -221,14 +228,20 @@ def _expert_projection(X, XS, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.
         split = work % SPLITS
         if route % 9 == 8:
             expert = gl.cast(0, gl.uint32)
+            expert_owned = True
         else:
-            expert = _expert_at_rank(Logits, Bias, route // 9, route % 9, ROUTER_SPLITS).to(gl.uint32)
+            global_expert = _expert_at_rank(Logits, Bias, route // 9, route % 9, ROUTER_SPLITS)
+            expert, expert_owned = _local_expert(global_expert, expert_start, LOCAL_EXPERTS)
+            expert = expert.to(gl.uint32)
     else:
         route, tile, split = _expert_coordinates(N, M, UP, SPLITS, BN, SHARED_ONLY, STAGGER)
         if SHARED_ONLY:
             expert = gl.cast(0, gl.uint32)
+            expert_owned = True
         else:
             expert = gl.load(Ids + route).to(gl.uint32)
+            expert_owned = expert < LOCAL_EXPERTS
+    safe_expert = gl.minimum(expert, LOCAL_EXPERTS - 1)
     if not RECOMPUTE_ROUTE:
         if SHARED_ONLY:
             members = gl.cast(((1 << M * 4) - 1) // 15 * 9, gl.uint64)
@@ -264,8 +277,8 @@ def _expert_projection(X, XS, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.
         sn = (tile * BN + gl.arange(0, BN, gl.SliceLayout(1, scale_layout))).to(gl.uint32)
         srow = gl.where(sn < N // 2, 2 * sn, 2 * (sn - N // 2) + 1) if UP else sn
         sg = gl.arange(0, BK // 32, gl.SliceLayout(0, scale_layout)).to(gl.uint32)
-        weight_base = W.to(gl.pointer_type(gl.uint32)) + expert.to(gl.int64) * (N * K // 8)
-        scale_base = Scales + expert * (N * gl.cdiv(K // 32, 8) * 8)
+        weight_base = W.to(gl.pointer_type(gl.uint32)) + safe_expert.to(gl.int64) * (N * K // 8)
+        scale_base = Scales + safe_expert * (N * gl.cdiv(K // 32, 8) * 8)
         if PREFETCH:
             gl.static_assert(BK == 256 and RECOMPUTE_ROUTE)
             first_start = (split * (K // SPLITS)).to(gl.uint32)
@@ -317,6 +330,7 @@ def _expert_projection(X, XS, W, Scales, Ids, Groups, Y, N: gl.constexpr, K: gl.
         dest = gl.convert_layout(destination, gl.SliceLayout(1, mma))
         valid = dest >= 0 if not RECOMPUTE_ROUTE else om == 0
         output_row = dest // 9 if SHARED_ONLY and (not UP) else dest
+        acc = gl.where(expert_owned, acc, 0.0)
         gl.store(Y + (output_row[:, None] * SPLITS + split) * N + on[None, :], acc, valid[:, None])
 
 @gluon.jit
@@ -327,11 +341,11 @@ def _select_and_shared(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU,
         _expert_projection(X, XS, W, Scales, Ids, Groups, GU, 2 * I, H, M, True, SPLITS, BN, SHARED_ONLY=True)
 
 @gluon.jit
-def _select_and_up(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, SCALE: gl.constexpr, BK: gl.constexpr=128, WEIGHT_CACHE: gl.constexpr='buffer'):
+def _select_and_up(Logits, Bias, Ids, Weights, Groups, X, XS, W, Scales, GU, expert_start, M: gl.constexpr, H: gl.constexpr, I: gl.constexpr, ROUTER_SPLITS: gl.constexpr, SPLITS: gl.constexpr, BN: gl.constexpr, LOCAL_EXPERTS: gl.constexpr, SCALE: gl.constexpr, BK: gl.constexpr=128, WEIGHT_CACHE: gl.constexpr='buffer'):
     if gl.program_id(0) < M:
-        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, False, SCALE)
+        _select_routes(Logits, Bias, Ids, Weights, Groups, ROUTER_SPLITS, False, SCALE, expert_start, LOCAL_EXPERTS)
     else:
-        _expert_projection(X, XS, W, Scales, Ids, Groups, GU, 2 * I, H, M, True, SPLITS, BN, RECOMPUTE_ROUTE=True, Logits=Logits, Bias=Bias, ROUTER_SPLITS=ROUTER_SPLITS, BK=BK, WEIGHT_CACHE=WEIGHT_CACHE)
+        _expert_projection(X, XS, W, Scales, Ids, Groups, GU, 2 * I, H, M, True, SPLITS, BN, RECOMPUTE_ROUTE=True, Logits=Logits, Bias=Bias, ROUTER_SPLITS=ROUTER_SPLITS, BK=BK, WEIGHT_CACHE=WEIGHT_CACHE, expert_start=expert_start, LOCAL_EXPERTS=LOCAL_EXPERTS)
 
 @gluon.jit
 def _activation_tile(GU, Q, QS, route, tile, I: gl.constexpr, SPLITS: gl.constexpr, WARPS: gl.constexpr, VEC: gl.constexpr=2, NATIVE: gl.constexpr=False, LIMIT: gl.constexpr=10.0):
@@ -499,7 +513,7 @@ def _down_accumulator(X, XS, W, Scales, Ids, token, tile, N: gl.constexpr, K: gl
     return acc
 
 @gluon.jit
-def _route_down(X, XS, W, Scales, Ids, P, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr):
+def _route_down(X, XS, W, Scales, Ids, P, N: gl.constexpr, K: gl.constexpr, BN: gl.constexpr, LOCAL_EXPERTS: gl.constexpr=384):
     token = gl.program_id(0)
     rank = gl.program_id(1)
     tile = gl.program_id(2)
@@ -514,6 +528,8 @@ def _route_down(X, XS, W, Scales, Ids, P, N: gl.constexpr, K: gl.constexpr, BN: 
     bsl: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(bd, [BN, 4])
     ar = gl.full((16,), route, gl.uint32, gl.SliceLayout(1, data_layout))
     expert = gl.load(Ids + route).to(gl.uint32)
+    expert_owned = expert < LOCAL_EXPERTS
+    expert = gl.minimum(expert, LOCAL_EXPERTS - 1)
     k = gl.arange(0, 64, gl.SliceLayout(0, data_layout)).to(gl.uint32)
     wn = gl.arange(0, BN, gl.SliceLayout(1, word_layout)).to(gl.uint32)
     wk = gl.arange(0, 16, gl.SliceLayout(0, word_layout)).to(gl.uint32) * 8
@@ -537,6 +553,7 @@ def _route_down(X, XS, W, Scales, Ids, P, N: gl.constexpr, K: gl.constexpr, BN: 
         acc = gl.amd.cdna4.mfma_scaled(gl.convert_layout(a, ad), gl.convert_layout(ax, asl), 'e2m1', gl.convert_layout(b.T, bd), gl.convert_layout(bx, bsl), 'e2m1', acc)
     om = gl.arange(0, 16, gl.SliceLayout(1, mma))
     on = tile * BN + gl.arange(0, BN, gl.SliceLayout(0, mma))
+    acc = gl.where(expert_owned, acc, 0.0)
     gl.store(P + route * N + om[:, None] * 0 + on[None, :], acc, om[:, None] == 0)
 
 @gluon.jit
@@ -796,17 +813,29 @@ def _stream_paired_down(X, XS, W, Scales, Ids, Weights, Y, N: gl.constexpr, K: g
     gl.store(Y + token * N + n[None, :], result0)
     gl.store(Y + (token + 1) * N + n[None, :], result1)
 
-def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_scaling_factor=2.5, swiglu_limit=10.0) -> torch.Tensor:
+def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, expert_start=0, routed_scaling_factor=2.5, swiglu_limit=10.0) -> torch.Tensor:
     m, h = x.shape
+    fp4_dtype = getattr(torch, 'float4_e2m1fn_x2', None)
+    if fp4_dtype is not None and w13.dtype == fp4_dtype:
+        w13 = w13.view(torch.uint8)
+    if fp4_dtype is not None and w2.dtype == fp4_dtype:
+        w2 = w2.view(torch.uint8)
+    if w13.dtype != torch.uint8 or w2.dtype != torch.uint8:
+        raise RuntimeError("DeepSeek-V4 Pro Gluon MoE requires packed FP4 weights")
     if m not in (1, 4, 6):
         raise RuntimeError(f"DeepSeek-V4 Pro Gluon MoE does not support M={m}")
     if h != 7168 or router.shape != (384, 7168):
         raise RuntimeError("DeepSeek-V4 Pro Gluon MoE requires router [384, 7168]")
-    if w13.shape != (384, 768, 3584) or w2.shape != (384, 7168, 192):
+    local_experts = w13.shape[0]
+    intermediate = w13.shape[1] // 2
+    if (local_experts, intermediate) not in ((384, 384), (96, 1536)):
+        raise RuntimeError("DeepSeek-V4 Pro Gluon MoE supports only EP1 or EP4 weights")
+    if w13.shape != (local_experts, 2 * intermediate, 3584) or w2.shape != (local_experts, 7168, intermediate // 2):
         raise RuntimeError("DeepSeek-V4 Pro Gluon MoE received incompatible FP4 weights")
+    if expert_start < 0 or expert_start + local_experts > 384 or expert_start % local_experts != 0:
+        raise RuntimeError("DeepSeek-V4 Pro Gluon MoE received an invalid expert range")
     if swiglu_limit != 10.0:
         raise RuntimeError("DeepSeek-V4 Pro Gluon MoE requires swiglu_limit=10")
-    intermediate = w13.shape[1] // 2
     routes = m * 9
     direct = m in (1, 4, 6)
     grouped = not direct
@@ -836,9 +865,9 @@ def fused_moe(x, router, correction_bias, w13, w13_scale, w2, w2_scale, routed_s
     out = empty((m, h))
     _router_linear[24 * router_splits + m * (h // (32 * quant_groups)) + int(grouped),](x, router, logits, xq, xs, groups, h, x.stride(0), m, router_splits, router_block, 16, grouped, quant_vector, quant_groups, NATIVE=False, num_warps=1)
     if direct:
-        _select_and_up[m + routes * splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, m, h, intermediate, router_splits, splits, up_width, routed_scaling_factor, up_panel, up_cache, num_warps=1)
+        _select_and_up[m + routes * splits * (2 * intermediate // up_width),](logits, correction_bias, ids, weights, groups, xq, xs, w13, w13_scale, gu, expert_start, m, h, intermediate, router_splits, splits, up_width, local_experts, routed_scaling_factor, up_panel, up_cache, num_warps=1)
         _activate_quantize[routes, intermediate // 64](gu, aq, aqs, intermediate, splits, 1, VEC=1 if m == 1 else 2, NATIVE=True, LIMIT=swiglu_limit, num_warps=1, enable_fp_fusion=False)
-        _route_down[m, 9, h // 16](aq, aqs, w2, w2_scale, ids, down_output, h, intermediate, 16, num_warps=1, enable_fp_fusion=False)
+        _route_down[m, 9, h // 16](aq, aqs, w2, w2_scale, ids, down_output, h, intermediate, 16, local_experts, num_warps=1, enable_fp_fusion=False)
         _combine[m, h // 256](down_output, weights, out, h, 256, 1, 4, num_warps=4, enable_fp_fusion=False)
         return out
     if stagger:
